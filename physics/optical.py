@@ -47,9 +47,17 @@ def hole_subband_energy(E_h: np.ndarray) -> np.ndarray:
     return -np.asarray(E_h, dtype=float)
 
 
-def overlap_squared(psi_e: np.ndarray, psi_h: np.ndarray, dx: float) -> float:
+def overlap_squared(psi_e: np.ndarray, psi_h: np.ndarray, dx) -> float:
     """
     |integral psi_e(x) psi_h(x) dx|^2 for one electron/hole state pair.
+
+    dx : scalar (uniform grid) or a length-N array of per-node quadrature
+    weights (a non-uniform grid's finite-volume cell widths -- see
+    physics.grid_utils.node_spacings; NOT the length-(N-1) per-edge
+    spacing array the stencil solvers use). Weighting per-point *before*
+    summing is what makes this correct for a non-uniform grid; scaling the
+    unweighted sum by a scalar dx afterwards (equivalent only when dx is
+    constant) is the uniform-grid special case of the same expression.
 
     Both wavefunctions are dx-normalised (integral |psi|^2 dx = 1, see
     physics.schrodinger.solve_schrodinger), so by Cauchy-Schwarz this is
@@ -57,7 +65,7 @@ def overlap_squared(psi_e: np.ndarray, psi_h: np.ndarray, dx: float) -> float:
     envelopes (flat-band limit), falling toward 0 as an internal field
     pulls the electron and hole to opposite sides of the well.
     """
-    integral = np.sum(psi_e * psi_h) * dx
+    integral = np.sum(psi_e * psi_h * dx)
     return float(integral * integral)
 
 

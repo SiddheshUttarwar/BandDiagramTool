@@ -22,6 +22,7 @@ References:
 
 import numpy as np
 from physics.materials.algan import get_AlGaN_params
+from physics.grid_utils import central_difference
 
 
 # Pyroelectric coefficients [C/(m²·K)], PRB 93:081205 (2016)
@@ -99,7 +100,7 @@ def compute_Ppz(x_Al: np.ndarray,
 
 
 def compute_pol_charge(P_total: np.ndarray,
-                       dx: float,
+                       dx,
                        relaxed_mask: np.ndarray | None = None) -> np.ndarray:
     """
     Convert total polarization profile to volume charge density [C/m³].
@@ -113,7 +114,9 @@ def compute_pol_charge(P_total: np.ndarray,
     Parameters
     ----------
     P_total      : total polarization P_sp + P_pz [C/m²], length N
-    dx           : grid spacing [m]
+    dx           : grid spacing [m] -- scalar (uniform) or length-(N-1)
+                   array of per-edge spacings (non-uniform; see
+                   physics.grid_utils)
     relaxed_mask : boolean array; if True at index i, the interface charge
                    between i-1 and i is zeroed (relaxed layer boundary)
 
@@ -123,17 +126,11 @@ def compute_pol_charge(P_total: np.ndarray,
               (positive = donor-like, negative = acceptor-like)
     """
     P = np.asarray(P_total, dtype=float)
-    # Central difference for interior; forward/backward at edges
-    rho = np.zeros_like(P)
-    rho[1:-1] = -(P[2:] - P[:-2]) / (2.0 * dx)
-    rho[0]    = -(P[1]  - P[0])   / dx
-    rho[-1]   = -(P[-1] - P[-2])  / dx
-
-    return rho
+    return -central_difference(P, dx)
 
 
 def compute_quasi_field(x_Al: np.ndarray,
-                        dx: float) -> np.ndarray:
+                        dx) -> np.ndarray:
     """
     Quasi-electric field from the composition gradient [V/m].
 
@@ -143,6 +140,9 @@ def compute_quasi_field(x_Al: np.ndarray,
 
     where chi(x) = 4.1 - 2.2*x [eV] is the electron affinity.
     This is separate from and additive to the Poisson-solved field F = -dphi/dz.
+
+    dx : scalar (uniform) or length-(N-1) array of per-edge spacings
+    (non-uniform; see physics.grid_utils).
 
     Returns
     -------
@@ -154,13 +154,8 @@ def compute_quasi_field(x_Al: np.ndarray,
     Eg_GaN = 3.44
     chi = 4.1 - 0.65 * (Eg - Eg_GaN)   # electron affinity [eV]
 
-    dchi = np.zeros_like(chi)
-    dchi[1:-1] = (chi[2:] - chi[:-2]) / (2.0 * dx)
-    dchi[0]    = (chi[1]  - chi[0])   / dx
-    dchi[-1]   = (chi[-1] - chi[-2])  / dx
-
     # dchi/dz in eV/m → V/m (chi is in eV, dz in m)
-    return dchi
+    return central_difference(chi, dx)
 
 
 def interface_sheet_charges(P_total: np.ndarray,

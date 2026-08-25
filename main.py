@@ -53,8 +53,18 @@ print(f"Efn range = [{result.Efn.min():.4f}, {result.Efn.max():.4f}] eV,  "
       f"Efp range = [{result.Efp.min():.4f}, {result.Efp.max():.4f}] eV")
 
 if result.qcse_transition_eV is not None:
-    print(f"\nQCSE:  e1-h1 transition energy = {result.qcse_transition_eV:.4f} eV   "
-          f"e-h overlap = {result.qcse_overlap * 100:.2f}%")
+    ie, ih = result.qcse_pair if result.qcse_pair is not None else (0, 0)
+    if result.qcse_in_well:
+        lo, hi = result.qw_window_nm
+        where = f"in the quantum well ({lo:.1f}-{hi:.1f} nm)"
+    elif result.qw_window_nm is not None:
+        lo, hi = result.qw_window_nm
+        where = (f"global ground state -- no solved subband is confined in the "
+                 f"detected well ({lo:.1f}-{hi:.1f} nm)")
+    else:
+        where = "global ground state -- no quantum well layer detected"
+    print(f"\nQCSE:  e{ie+1}-h{ih+1} transition energy = {result.qcse_transition_eV:.4f} eV   "
+          f"e-h overlap = {result.qcse_overlap * 100:.2f}%  ({where})")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Plot

@@ -193,10 +193,17 @@ def plot_wavefunctions(
                 ha='right', va='top', fontsize=7, color=color)
 
     if r.qcse_transition_eV is not None:
+        ie, ih = r.qcse_pair if r.qcse_pair is not None else (0, 0)
+        if r.qcse_in_well:
+            well_tag = ' (in QW)'
+        elif r.qw_window_nm is not None:
+            well_tag = ' (global — no state confined in the detected QW)'
+        else:
+            well_tag = ' (global — no QW layer detected)'
         ax.text(
             0.02, 0.02,
-            f'QCSE:  $E_{{e_1h_1}}$ = {r.qcse_transition_eV:.4f} eV   '
-            f'|$\\int\\psi_e\\psi_h\\,dx$|$^2$ = {r.qcse_overlap * 100:.2f}%',
+            f'QCSE:  $E_{{e_{{{ie+1}}}h_{{{ih+1}}}}}$ = {r.qcse_transition_eV:.4f} eV   '
+            f'|$\\int\\psi_e\\psi_h\\,dx$|$^2$ = {r.qcse_overlap * 100:.2f}%{well_tag}',
             transform=ax.transAxes, ha='left', va='bottom', fontsize=8,
             color='#333333', bbox=dict(boxstyle='round', fc='white', alpha=0.75, ec='#cccccc'),
         )
@@ -371,25 +378,40 @@ def plot_qcse(
                     'Run with Quantum enabled and an undoped quantum well layer.',
                     ha='center', va='center', fontsize=10, transform=ax.transAxes)
         else:
-            ax.text(0.5, 0.68, f'$e_1$–$h_1$ transition energy:  {r.qcse_transition_eV:.4f} eV',
+            ie, ih = r.qcse_pair if r.qcse_pair is not None else (0, 0)
+            label = f'$e_{{{ie+1}}}$–$h_{{{ih+1}}}$'
+            if r.qcse_in_well:
+                lo, hi = r.qw_window_nm
+                source = f'the quantum well at {lo:.1f}–{hi:.1f} nm'
+            elif r.qw_window_nm is not None:
+                lo, hi = r.qw_window_nm
+                source = (f'the global ground state — a quantum well was detected at '
+                          f'{lo:.1f}–{hi:.1f} nm, but no solved subband is confined '
+                          f'there; the electron/hole ground states are instead trapped in a '
+                          f'different polarization/doping notch elsewhere in the device')
+            else:
+                source = ('the global ground state — no undoped, locally-narrower-bandgap '
+                          'layer was found in this device, so there is no well to restrict to')
+            ax.text(0.5, 0.74, f'{label} transition energy:  {r.qcse_transition_eV:.4f} eV',
                     ha='center', fontsize=12, transform=ax.transAxes)
-            ax.text(0.5, 0.54,
-                    f'$e_1$–$h_1$ wavefunction overlap  |$\\int\\psi_e\\psi_h\\,dx$|$^2$:  '
+            ax.text(0.5, 0.60,
+                    f'{label} wavefunction overlap  |$\\int\\psi_e\\psi_h\\,dx$|$^2$:  '
                     f'{r.qcse_overlap * 100:.2f}%',
                     ha='center', fontsize=12, transform=ax.transAxes)
+            ax.text(0.5, 0.48, f'({source})', ha='center', fontsize=8,
+                    color='#888888', transform=ax.transAxes, wrap=True)
             if (r.qcse_dominant_pair is not None
-                    and r.qcse_dominant_pair != (0, 0)
+                    and r.qcse_dominant_pair != (ie, ih)
                     and r.qcse_dominant_overlap is not None
                     and r.qcse_dominant_overlap > (r.qcse_overlap or 0.0) * 1.5):
-                ie, ih = r.qcse_dominant_pair
+                die, dih = r.qcse_dominant_pair
                 ax.text(
-                    0.5, 0.38,
-                    f'Note: $e_1$/$h_1$ are localised in different notches (low overlap).\n'
-                    f'Best-overlap pair is $e_{{{ie+1}}}$–$h_{{{ih+1}}}$: '
+                    0.5, 0.32,
+                    f'Note: highest-overlap pair overall is $e_{{{die+1}}}$–$h_{{{dih+1}}}$: '
                     f'{r.qcse_dominant_transition_eV:.4f} eV, '
                     f'{r.qcse_dominant_overlap * 100:.2f}% overlap.',
                     ha='center', fontsize=8.5, color='#a55a00', transform=ax.transAxes)
-            ax.text(0.5, 0.16, 'Run a voltage sweep to see the Stark shift vs bias.',
+            ax.text(0.5, 0.12, 'Run a voltage sweep to see the Stark shift vs bias.',
                     ha='center', fontsize=9, color='#888888', transform=ax.transAxes)
         ax.set_title('Quantum-Confined Stark Effect', fontsize=10)
         return ax
@@ -401,7 +423,7 @@ def plot_qcse(
     V, E_t, ov = V[order], E_t[order], ov[order]
 
     ax.plot(V, E_t, color=_COLORS['Ec'], lw=2.0, marker='o', ms=4,
-             label='$E_{e_1h_1}$ (transition energy)')
+             label='$E_{e-h}$ (QW transition energy)')
     ax.set_xlabel('Applied bias (V)', fontsize=11)
     ax.set_ylabel('Transition energy (eV)', color=_COLORS['Ec'], fontsize=11)
     ax.tick_params(axis='y', labelcolor=_COLORS['Ec'])

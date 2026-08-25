@@ -13,6 +13,7 @@ Supported grading profiles:
 """
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass
@@ -23,6 +24,7 @@ class AbruptLayer:
     n_doping: float = 0.0  # n-type (donor) doping concentration [cm^-3]
     p_doping: float = 0.0  # p-type (acceptor) doping concentration [cm^-3]
     relaxed: bool = False  # True if this layer is strain-relaxed (not pseudomorphic)
+    dx_nm: Optional[float] = None  # grid spacing for this layer [nm]; None = use the device default
 
 
 @dataclass
@@ -39,6 +41,7 @@ class GradedLayer:
     profile: str = 'linear'  # 'linear' | 'parabolic' | 'stepped' | 'abrupt'
     n_steps: int = 10        # number of discrete steps for 'stepped' profile
     relaxed: bool = False
+    dx_nm: Optional[float] = None  # grid spacing for this layer [nm]; None = use the device default
 
 
 @dataclass

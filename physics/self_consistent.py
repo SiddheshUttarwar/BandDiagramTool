@@ -59,7 +59,11 @@ from physics.fermi_dirac import (
 from physics.poisson import solve_poisson, solve_poisson_newton, electric_field
 from physics.schrodinger import solve_schrodinger, hole_potential
 from physics.drift_diffusion import solve_continuity_electron, solve_continuity_hole, compute_recombination
-from physics.optical import ground_state_transition, dominant_transition
+from physics.optical import (
+    ground_state_transition, dominant_transition,
+    overlap_squared, hole_subband_energy,
+)
+from physics.grid_utils import node_spacings
 from physics.constants import q as _q, kB
 
 logger = logging.getLogger(__name__)
@@ -191,25 +195,68 @@ def _detect_quantum_region(g: GridData, margin_nm: float = 10.0) -> tuple[int, i
     if len(idx) < 2:
         return 0, g.N
 
-    dx_nm = g.dx * 1e9
-    margin_pts = max(1, int(round(margin_nm / dx_nm)))
-    i0 = max(0, int(idx[0]) - margin_pts)
-    i1 = min(g.N, int(idx[-1]) + 1 + margin_pts)
+    # Padding in physical nm, converted to grid indices via g.x_nm rather
+    # than a single scalar dx -- correct regardless of whether the grid is
+    # uniform or has per-layer spacing (devices.grid_builder's qw_window /
+    # per-layer dx_nm).
+    x_lo = g.x_nm[idx[0]] - margin_nm
+    x_hi = g.x_nm[idx[-1]] + margin_nm
+    i0 = max(0, int(np.searchsorted(g.x_nm, x_lo, side='left')))
+    i1 = min(g.N, int(np.searchsorted(g.x_nm, x_hi, side='right')))
     return i0, i1
 
 
-def _solve_confined_states(V_eV_full: np.ndarray, m_full: np.ndarray, dx: float,
+def _solve_confined_states(V_eV_full: np.ndarray, m_full: np.ndarray, dx,
                             n_states: int, i0: int, i1: int, N: int):
     """
     Solve the Schrödinger equation restricted to grid indices [i0, i1) and
     embed the resulting wavefunctions into full-length (N-point),
     zero-padded arrays, so downstream code (quantum_electron_density etc.)
     can treat them exactly like a full-domain solve.
+
+    dx : scalar (uniform grid; used unchanged) or the full-device length-
+    (N-1) per-edge spacing array (non-uniform grid), which must be sliced
+    down to the subdomain's own edges (length i1-i0-1) before being handed
+    to solve_schrodinger -- passing the full-device array unsliced would
+    both be the wrong length and describe the wrong edges.
     """
-    E, psi_sub = solve_schrodinger(V_eV_full[i0:i1], m_full[i0:i1], dx, n_states=n_states)
+    dx_sub = dx if np.ndim(dx) == 0 else np.asarray(dx)[i0:i1 - 1]
+    E, psi_sub = solve_schrodinger(V_eV_full[i0:i1], m_full[i0:i1], dx_sub, n_states=n_states)
     psi_full = np.zeros((len(E), N))
     psi_full[:, i0:i1] = psi_sub
     return E, psi_full
+
+
+def _first_state_in_window(E: Optional[np.ndarray], psi: Optional[np.ndarray],
+                            window: tuple[int, int], dx_cell: np.ndarray,
+                            min_frac: float = 0.5) -> Optional[int]:
+    """
+    Index of the lowest-energy solved state whose probability is mostly
+    (>= min_frac) inside `window` = (i0, i1) grid indices.
+
+    Used to pick out "the" quantum well's own e1/h1 states for the QCSE
+    diagnostic, since the *global* lowest-energy state (index 0) can
+    instead be a polarization/doping-induced notch elsewhere in the
+    device -- see the qw_window docstring in devices.grid_builder.
+
+    Weighted by dx_cell (the per-node finite-volume quadrature weight, see
+    physics.grid_utils) rather than a raw sum of psi^2: on a non-uniform
+    grid (e.g. a finely-meshed well next to a coarsely-meshed buffer) an
+    unweighted point count would over-count whichever region happens to
+    have more grid points, independent of its actual physical extent.
+    """
+    if E is None or psi is None or len(E) == 0:
+        return None
+    i0, i1 = window
+    for k in range(len(E)):
+        weighted = psi[k] ** 2 * dx_cell
+        total = float(np.sum(weighted))
+        if total <= 0:
+            continue
+        inside = float(np.sum(weighted[i0:i1]))
+        if inside / total >= min_frac:
+            return k
+    return None
 
 
 def _blended_density(quantum_density: np.ndarray, classical_density: np.ndarray,
@@ -264,11 +311,19 @@ class SolverResult:
     E_h: Optional[np.ndarray] = None
     psi_h: Optional[np.ndarray] = None
 
-    # Quantum-Confined Stark Effect (e1-h1 ground-state transition; see
-    # physics/optical.py). None when quantum=False or no confined pair
-    # was found.
+    # Quantum-Confined Stark Effect: the e-h transition energy and overlap
+    # for the layer stack's own quantum well (see qw_window below), falling
+    # back to the plain global e1-h1 pair if no such layer is found. None
+    # when quantum=False or no confined pair was found. See physics/optical.py.
     qcse_transition_eV: Optional[float] = None
     qcse_overlap: Optional[float] = None
+    qcse_pair: Optional[tuple] = None       # (ie, ih) subband indices actually used
+    qcse_in_well: bool = False              # True if qcse_pair was well-restricted
+
+    # Grid index / nm window of the auto-detected quantum well (devices.
+    # grid_builder.build_grid), used to focus the QCSE calc above and to
+    # let the GUI auto-zoom the plot onto it. None if no such layer exists.
+    qw_window_nm: Optional[tuple] = None
 
     # Highest-overlap (electron subband, hole subband) pair among *all*
     # solved states -- the pair actually most likely to dominate emission.
@@ -452,8 +507,12 @@ def solve_self_consistent(
                 elif sigma < 0:
                     phi[idx] = g.Ev0[idx] - Efp[idx] - 0.05
     
-        # Smooth aggressively
-        sigma_pts = max(2, int(5.0e-9 / g.dx))  # ~5 nm screening length
+        # Smooth aggressively. This is only an initial-guess heuristic (not
+        # part of the physics), so a single representative spacing is fine
+        # even on a non-uniform grid -- the median reduces to the exact
+        # value on a uniform grid, leaving that case unchanged.
+        dx_typical = float(np.median(np.atleast_1d(g.dx)))
+        sigma_pts = max(2, int(5.0e-9 / dx_typical))  # ~5 nm screening length
         phi = gaussian_filter1d(phi, sigma=sigma_pts)
     
         # Re-enforce boundaries exactly
@@ -723,15 +782,47 @@ def solve_self_consistent(
 
     qcse_transition_eV = None
     qcse_overlap = None
+    qcse_pair = None
+    qcse_in_well = False
     qcse_dominant_transition_eV = None
     qcse_dominant_overlap = None
     qcse_dominant_pair = None
+    qw_window_nm = None
+
+    if getattr(g, 'qw_window', None) is not None:
+        qw_i0, qw_i1 = g.qw_window
+        qw_window_nm = (float(g.x_nm[qw_i0]), float(g.x_nm[qw_i1 - 1]))
+
     if quantum:
-        e1h1 = ground_state_transition(E_e, psi_e, E_h, psi_h, g.dx)
-        if e1h1 is not None:
-            qcse_transition_eV = e1h1.energy_eV
-            qcse_overlap = e1h1.overlap
-        dom = dominant_transition(E_e, psi_e, E_h, psi_h, g.dx,
+        # physics.optical's overlap/transition helpers integrate over the
+        # domain point-by-point, so they need the per-*node* quadrature
+        # weight (cell_width, length N) -- not g.dx, which is the per-*edge*
+        # spacing array (length N-1) the stencil solvers use.
+        dx_cell = node_spacings(g.dx, g.N)[2]
+
+        # Prefer the layer stack's own quantum well (devices.grid_builder's
+        # qw_window) over the global lowest-energy state: the latter can be
+        # a polarization/doping-induced notch elsewhere in the device
+        # rather than the well the user actually designed.
+        if g.qw_window is not None:
+            ie_sel = _first_state_in_window(E_e, psi_e, g.qw_window, dx_cell)
+            ih_sel = _first_state_in_window(E_h, psi_h, g.qw_window, dx_cell)
+            if ie_sel is not None and ih_sel is not None:
+                qcse_overlap = overlap_squared(psi_e[ie_sel], psi_h[ih_sel], dx_cell)
+                Ev_sub = hole_subband_energy(E_h)
+                qcse_transition_eV = float(E_e[ie_sel] - Ev_sub[ih_sel])
+                qcse_pair = (ie_sel, ih_sel)
+                qcse_in_well = True
+
+        if qcse_transition_eV is None:
+            e1h1 = ground_state_transition(E_e, psi_e, E_h, psi_h, dx_cell)
+            if e1h1 is not None:
+                qcse_transition_eV = e1h1.energy_eV
+                qcse_overlap = e1h1.overlap
+                qcse_pair = (e1h1.ie, e1h1.ih)
+                qcse_in_well = False
+
+        dom = dominant_transition(E_e, psi_e, E_h, psi_h, dx_cell,
                                    n_e=len(E_e), n_h=len(E_h))
         if dom is not None:
             qcse_dominant_transition_eV = dom.energy_eV
@@ -748,6 +839,8 @@ def solve_self_consistent(
         eps_xx=g.eps_xx, eps_zz=g.eps_zz,
         E_e=E_e, psi_e=psi_e, E_h=E_h, psi_h=psi_h,
         qcse_transition_eV=qcse_transition_eV, qcse_overlap=qcse_overlap,
+        qcse_pair=qcse_pair, qcse_in_well=qcse_in_well,
+        qw_window_nm=qw_window_nm,
         qcse_dominant_transition_eV=qcse_dominant_transition_eV,
         qcse_dominant_overlap=qcse_dominant_overlap,
         qcse_dominant_pair=qcse_dominant_pair,

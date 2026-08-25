@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from devices.layer import AbruptLayer, GradedLayer, Contact
 from physics.materials.algan import get_AlGaN_params, get_AlGaN_params_T
@@ -32,7 +32,9 @@ class GridData:
     # --- Grid ---
     x_m: np.ndarray          # position [m]
     x_nm: np.ndarray         # position [nm] (for plotting)
-    dx: float                # uniform grid spacing [m]
+    dx: np.ndarray           # per-edge grid spacing [m], length N-1 (may be
+                              # non-uniform if any layer set its own dx_nm;
+                              # see physics.grid_utils.node_spacings)
     N: int                   # number of grid points
 
     # --- Composition ---
@@ -83,6 +85,13 @@ class GridData:
 
     # --- Temperature ---
     T: float                 # simulation temperature [K]
+
+    # --- Primary quantum well (for QCSE diagnostics) ---
+    # Grid index window (i0, i1) of the layer stack's "textbook" quantum
+    # well -- an undoped layer whose composition is a strict local minimum
+    # relative to both neighbours (lower bandgap sandwiched by
+    # higher-bandgap barriers). None if the layer stack has no such layer.
+    qw_window: Optional[Tuple[int, int]] = None
 
 
 def _x_Al_profile(layer: AbruptLayer | GradedLayer, n_pts: int) -> np.ndarray:
@@ -135,16 +144,28 @@ def build_grid(
     bottom_contact = next(c for c in contacts if c.position == 'bottom')
     top_contact    = next(c for c in contacts if c.position == 'top')
 
-    dx_m = dx_nm * 1e-9   # nm → m
+    dx_m = dx_nm * 1e-9   # nm → m; the *default* spacing for layers that
+                          # don't request their own (layer.dx_nm)
 
     # --- Build x_Al, doping, and relaxation profiles from layers ---
+    # Each layer may request its own grid spacing (layer.dx_nm) -- e.g. a
+    # fine mesh in a thin quantum well without paying for that resolution
+    # across the whole device. Position is therefore built by concatenating
+    # each layer's own local, uniformly-spaced sub-grid (n_pts points at
+    # that layer's own dx) rather than a single global np.arange(N)*dx_nm;
+    # the result is uniform overall only if every layer shares the same
+    # (or default) spacing, and non-uniform otherwise. See physics.
+    # grid_utils for how the solvers consume the resulting per-edge dx.
     x_Al_list  = []
     ND_list    = []
     NA_list    = []
     relaxed_list = []
+    x_nm_list  = []
 
+    pos_nm = 0.0
     for layer in layers:
-        n_pts = max(2, int(round(layer.thickness_nm / dx_nm)))
+        layer_dx_nm = layer.dx_nm if getattr(layer, 'dx_nm', None) else dx_nm
+        n_pts = max(2, int(round(layer.thickness_nm / layer_dx_nm)))
         x_Al_segment = _x_Al_profile(layer, n_pts)
         x_Al_list.append(x_Al_segment)
         ND_list.append(np.full(n_pts, layer.n_doping))
@@ -152,14 +173,52 @@ def build_grid(
         relaxed_list.append(
             np.full(n_pts, getattr(layer, 'relaxed', False))
         )
+        x_nm_list.append(pos_nm + np.arange(n_pts) * layer_dx_nm)
+        pos_nm += n_pts * layer_dx_nm
 
     x_Al_raw = np.concatenate(x_Al_list)
     ND    = np.concatenate(ND_list)
     NA    = np.concatenate(NA_list)
     relaxed = np.concatenate(relaxed_list).astype(bool)
+    x_nm  = np.concatenate(x_nm_list)
     N     = len(x_Al_raw)
-    x_nm  = np.arange(N) * dx_nm
     x_m   = x_nm * 1e-9
+    dx_edges_m = np.diff(x_m)   # per-edge spacing [m], length N-1 (see physics.grid_utils)
+
+    # --- Identify the primary quantum well (for QCSE diagnostics) ---
+    # A "well" is an undoped layer whose composition is a strict local
+    # minimum relative to both neighbours (lower bandgap sandwiched by
+    # higher-bandgap barriers on both sides) -- the textbook definition of
+    # a quantum well, found directly from the user's layer stack rather
+    # than from wherever a Schrodinger solve's *global* ground state
+    # happens to localise (which can instead be a polarization/doping
+    # notch elsewhere in the device -- see
+    # physics.self_consistent._detect_quantum_region, which restricts the
+    # solve to the whole undoped span, QW+barriers+EBL together, not just
+    # the well). Ties broken by picking the thinnest candidate (narrowest
+    # = most confined = the layer a designer would call "the" well).
+    def _layer_x_Al_repr(layer) -> float:
+        if isinstance(layer, AbruptLayer):
+            return layer.x_Al
+        return 0.5 * (layer.x_Al_start + layer.x_Al_end)
+
+    def _layer_undoped(layer) -> bool:
+        return layer.n_doping <= 0.0 and layer.p_doping <= 0.0
+
+    layer_offsets = np.cumsum([0] + [len(seg) for seg in x_Al_list])
+    qw_window: Optional[Tuple[int, int]] = None
+    qw_thickness = np.inf
+    for li in range(1, len(layers) - 1):
+        layer = layers[li]
+        if not _layer_undoped(layer):
+            continue
+        x_here = _layer_x_Al_repr(layer)
+        x_prev = _layer_x_Al_repr(layers[li - 1])
+        x_next = _layer_x_Al_repr(layers[li + 1])
+        if x_here < x_prev - 1e-6 and x_here < x_next - 1e-6:
+            if layer.thickness_nm < qw_thickness:
+                qw_thickness = layer.thickness_nm
+                qw_window = (int(layer_offsets[li]), int(layer_offsets[li + 1]))
 
     # --- Nextnano Nanosmoothing ---
     # Real heterojunctions are not perfectly abrupt. We smooth the composition
@@ -205,8 +264,8 @@ def build_grid(
     Psp_arr = compute_Psp(x_Al, T)
     Ppz_arr = compute_Ppz(x_Al, eps_xx, eps_zz)
     P_total = Psp_arr + Ppz_arr
-    pol_rho = compute_pol_charge(P_total, dx_m)
-    F_quasi = compute_quasi_field(x_Al, dx_m)
+    pol_rho = compute_pol_charge(P_total, dx_edges_m)
+    F_quasi = compute_quasi_field(x_Al, dx_edges_m)
 
     ifaces  = interface_sheet_charges(P_total, x_Al)
     iface_idx   = [idx for idx, _ in ifaces]
@@ -282,7 +341,7 @@ def build_grid(
         phi_top_eq = Ec0[-1] - phi_B
 
     return GridData(
-        x_m=x_m, x_nm=x_nm, dx=dx_m, N=N,
+        x_m=x_m, x_nm=x_nm, dx=dx_edges_m, N=N,
         x_Al=x_Al,
         Ec0=Ec0, Ev0=Ev0, Eg=Eg, chi=chi,
         eps_r=eps_r, m_e=m_e, m_hh=m_hh, m_lh=m_lh,
@@ -295,4 +354,5 @@ def build_grid(
         phi_bottom_eq=phi_bottom_eq, phi_top_eq=phi_top_eq,
         bottom_contact=bottom_contact, top_contact=top_contact,
         T=T,
+        qw_window=qw_window,
     )

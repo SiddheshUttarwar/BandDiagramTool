@@ -83,12 +83,12 @@ class LayerEditorPanel(ttk.LabelFrame):
         if new_kind == "Abrupt" and isinstance(layer, GradedLayer):
             new_layer = AbruptLayer(x_Al=layer.x_Al_start, thickness_nm=layer.thickness_nm,
                                      n_doping=layer.n_doping, p_doping=layer.p_doping,
-                                     relaxed=layer.relaxed)
+                                     relaxed=layer.relaxed, dx_nm=layer.dx_nm)
         elif new_kind == "Graded" and isinstance(layer, AbruptLayer):
             new_layer = GradedLayer(x_Al_start=layer.x_Al, x_Al_end=layer.x_Al,
                                      thickness_nm=layer.thickness_nm,
                                      n_doping=layer.n_doping, p_doping=layer.p_doping,
-                                     relaxed=layer.relaxed)
+                                     relaxed=layer.relaxed, dx_nm=layer.dx_nm)
         else:
             return
         self.model.replace_layer(self.index, new_layer)
@@ -135,6 +135,8 @@ class LayerEditorPanel(ttk.LabelFrame):
         self._field("n-doping (cm^-3)", layer.n_doping)
         self._field("p-doping (cm^-3)", layer.p_doping)
         self._bool_field("Strain-relaxed", layer.relaxed)
+        self._field("Grid spacing (nm, blank=default)",
+                     "" if layer.dx_nm is None else layer.dx_nm, kind="optional_float")
 
     def _build_graded_form(self, layer: GradedLayer):
         self._field("Al start (0-1)", layer.x_Al_start)
@@ -145,6 +147,8 @@ class LayerEditorPanel(ttk.LabelFrame):
         self._field("p-doping (cm^-3)", layer.p_doping)
         self._field("Steps (if stepped)", layer.n_steps, kind="int")
         self._bool_field("Strain-relaxed", layer.relaxed)
+        self._field("Grid spacing (nm, blank=default)",
+                     "" if layer.dx_nm is None else layer.dx_nm, kind="optional_float")
 
     # ------------------------------------------------------------------
     def _apply(self):
@@ -161,6 +165,8 @@ class LayerEditorPanel(ttk.LabelFrame):
                 return int(float(v))
             if kind == "bool":
                 return bool(v)
+            if kind == "optional_float":
+                return None if v.strip() == "" else float(v)
             return v
 
         try:
@@ -171,6 +177,7 @@ class LayerEditorPanel(ttk.LabelFrame):
                     n_doping=get("n-doping (cm^-3)"),
                     p_doping=get("p-doping (cm^-3)"),
                     relaxed=get("Strain-relaxed"),
+                    dx_nm=get("Grid spacing (nm, blank=default)"),
                 )
             else:
                 new_layer = GradedLayer(
@@ -182,6 +189,7 @@ class LayerEditorPanel(ttk.LabelFrame):
                     profile=get("Profile"),
                     n_steps=get("Steps (if stepped)"),
                     relaxed=get("Strain-relaxed"),
+                    dx_nm=get("Grid spacing (nm, blank=default)"),
                 )
         except (ValueError, KeyError):
             return  # invalid/incomplete input mid-edit; don't apply yet

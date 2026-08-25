@@ -78,6 +78,13 @@ class PlotPanel(ttk.Frame):
         self.results: List[SolverResult] = []
         self.current_index = 0
         self._layer_ranges: List[Tuple[str, float, float]] = []  # (label, xmin, xmax)
+        # Auto-zoom the plot onto the device's detected quantum well the
+        # first time a solve comes back (see SolverResult.qw_window_nm) --
+        # otherwise a QCSE-tilted 3nm well is an invisible sliver against a
+        # 300nm+ full-device x-axis. Only fires once per PlotPanel instance
+        # (a new project/open rebuilds the whole layout, see App._rebind_model)
+        # so it never fights a zoom choice the user made themselves.
+        self._auto_zoom_applied = False
 
         self._status_var = tk.StringVar(value="No solve yet.")
         status_bar = ttk.Frame(self)
@@ -129,7 +136,7 @@ class PlotPanel(ttk.Frame):
         self.results = [result]
         self.current_index = 0
         self._slider_frame.pack_forget()
-        self._update_zoom_choices(layers)
+        self._update_zoom_choices(layers, qw_range_nm=result.qw_window_nm)
         self._redraw_current()
 
     def show_sweep(self, results: List[SolverResult], layers: Optional[list] = None):
@@ -141,13 +148,21 @@ class PlotPanel(ttk.Frame):
         self._slider.set(self.current_index)
         self._slider_frame.pack(fill="x", before=self._notebook)
         self._update_slider_label()
-        self._update_zoom_choices(layers)
+        self._update_zoom_choices(layers, qw_range_nm=results[self.current_index].qw_window_nm)
         self._redraw_current()
 
-    def _update_zoom_choices(self, layers: Optional[list]):
+    def _update_zoom_choices(self, layers: Optional[list],
+                              qw_range_nm: Optional[Tuple[float, float]] = None):
         """Rebuild the Zoom dropdown from the current device's layers (in
         the bottom->top order devices.device.AlGaNDevice uses), keeping the
-        current selection if a layer of the same label still exists."""
+        current selection if a layer of the same label still exists.
+
+        The first time this PlotPanel sees a solve with a detected quantum
+        well (qw_range_nm), it auto-selects that layer instead of leaving
+        "Full device" selected -- a thin QCSE-tilted well is otherwise an
+        invisible sliver against the full x-axis and easy to miss entirely.
+        Never overrides a zoom choice the user has already made.
+        """
         previous = self._zoom_var.get()
         self._layer_ranges = []
         if layers:
@@ -162,6 +177,17 @@ class PlotPanel(ttk.Frame):
 
         values = [_FULL_DEVICE] + [label for label, _, _ in self._layer_ranges]
         self._zoom_combo.configure(values=values)
+
+        if not self._auto_zoom_applied and qw_range_nm is not None and self._layer_ranges:
+            qw_lo, qw_hi = qw_range_nm
+            match = min(
+                self._layer_ranges,
+                key=lambda item: abs(item[1] - qw_lo) + abs(item[2] - qw_hi),
+            )
+            self._zoom_var.set(match[0])
+            self._auto_zoom_applied = True
+            return
+
         self._zoom_var.set(previous if previous in values else _FULL_DEVICE)
 
     def _on_slider(self, value):

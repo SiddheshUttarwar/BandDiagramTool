@@ -59,6 +59,7 @@ from physics.fermi_dirac import (
 from physics.poisson import solve_poisson, solve_poisson_newton, electric_field
 from physics.schrodinger import solve_schrodinger, hole_potential
 from physics.drift_diffusion import solve_continuity_electron, solve_continuity_hole, compute_recombination
+from physics.optical import ground_state_transition, dominant_transition
 from physics.constants import q as _q, kB
 
 logger = logging.getLogger(__name__)
@@ -262,6 +263,22 @@ class SolverResult:
     psi_e: Optional[np.ndarray] = None
     E_h: Optional[np.ndarray] = None
     psi_h: Optional[np.ndarray] = None
+
+    # Quantum-Confined Stark Effect (e1-h1 ground-state transition; see
+    # physics/optical.py). None when quantum=False or no confined pair
+    # was found.
+    qcse_transition_eV: Optional[float] = None
+    qcse_overlap: Optional[float] = None
+
+    # Highest-overlap (electron subband, hole subband) pair among *all*
+    # solved states -- the pair actually most likely to dominate emission.
+    # A polarization-induced interface notch (see _detect_quantum_region)
+    # can sometimes pull the lowest-energy e1/h1 states to opposite ends of
+    # the device rather than into the intended quantum well, in which case
+    # this differs from (0, 0) and is the more physically meaningful number.
+    qcse_dominant_transition_eV: Optional[float] = None
+    qcse_dominant_overlap: Optional[float] = None
+    qcse_dominant_pair: Optional[tuple] = None   # (ie, ih)
 
     # Metadata
     V_applied: float = 0.0
@@ -704,6 +721,23 @@ def solve_self_consistent(
         n_final = electron_density(Ec_final, Efn, g.Nc, T)
         p_final = hole_density(Ev_final, Efp, g.Nv, T)
 
+    qcse_transition_eV = None
+    qcse_overlap = None
+    qcse_dominant_transition_eV = None
+    qcse_dominant_overlap = None
+    qcse_dominant_pair = None
+    if quantum:
+        e1h1 = ground_state_transition(E_e, psi_e, E_h, psi_h, g.dx)
+        if e1h1 is not None:
+            qcse_transition_eV = e1h1.energy_eV
+            qcse_overlap = e1h1.overlap
+        dom = dominant_transition(E_e, psi_e, E_h, psi_h, g.dx,
+                                   n_e=len(E_e), n_h=len(E_h))
+        if dom is not None:
+            qcse_dominant_transition_eV = dom.energy_eV
+            qcse_dominant_overlap = dom.overlap
+            qcse_dominant_pair = (dom.ie, dom.ih)
+
     return SolverResult(
         x_nm=g.x_nm, x_Al=g.x_Al,
         Ec=Ec_final, Ev=Ev_final, Ei=Ei_final,
@@ -713,6 +747,10 @@ def solve_self_consistent(
         Psp=g.Psp, Ppz=g.Ppz, P_total=g.P_total,
         eps_xx=g.eps_xx, eps_zz=g.eps_zz,
         E_e=E_e, psi_e=psi_e, E_h=E_h, psi_h=psi_h,
+        qcse_transition_eV=qcse_transition_eV, qcse_overlap=qcse_overlap,
+        qcse_dominant_transition_eV=qcse_dominant_transition_eV,
+        qcse_dominant_overlap=qcse_dominant_overlap,
+        qcse_dominant_pair=qcse_dominant_pair,
         V_applied=V_applied, T=T,
         converged=converged, n_iterations=n_iter,
         interface_indices=g.interface_indices,

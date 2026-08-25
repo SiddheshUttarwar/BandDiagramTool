@@ -52,6 +52,10 @@ print(f"\nConverged: {result.converged}  ({result.n_iterations} iterations)")
 print(f"Efn range = [{result.Efn.min():.4f}, {result.Efn.max():.4f}] eV,  "
       f"Efp range = [{result.Efp.min():.4f}, {result.Efp.max():.4f}] eV")
 
+if result.qcse_transition_eV is not None:
+    print(f"\nQCSE:  e1-h1 transition energy = {result.qcse_transition_eV:.4f} eV   "
+          f"e-h overlap = {result.qcse_overlap * 100:.2f}%")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Plot
 # ──────────────────────────────────────────────────────────────────────────────

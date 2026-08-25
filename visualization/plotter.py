@@ -10,6 +10,7 @@ Panels available:
   plot_fields()         — electrostatic + quasi-electric + total field
   plot_polarization()   — Psp, Ppz, P_total + interface sheet charge bars
   plot_strain()         — eps_xx and eps_zz vs position
+  plot_qcse()           — QCSE Stark shift + e-h overlap vs bias
   plot_all()            — 3x2 figure with all panels
 """
 
@@ -21,7 +22,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
-from typing import Optional
+from typing import List, Optional
 
 from physics.self_consistent import SolverResult
 from physics.constants import q as _q
@@ -191,6 +192,15 @@ def plot_wavefunctions(
         ax.text(x[-1] * 0.98, En_plot - 0.01, f'$h_{k+1}$',
                 ha='right', va='top', fontsize=7, color=color)
 
+    if r.qcse_transition_eV is not None:
+        ax.text(
+            0.02, 0.02,
+            f'QCSE:  $E_{{e_1h_1}}$ = {r.qcse_transition_eV:.4f} eV   '
+            f'|$\\int\\psi_e\\psi_h\\,dx$|$^2$ = {r.qcse_overlap * 100:.2f}%',
+            transform=ax.transAxes, ha='left', va='bottom', fontsize=8,
+            color='#333333', bbox=dict(boxstyle='round', fc='white', alpha=0.75, ec='#cccccc'),
+        )
+
     return ax
 
 
@@ -325,6 +335,95 @@ def plot_strain(
     ax.legend(fontsize=9)
     ax.set_title('Strain', fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
+    return ax
+
+
+def plot_qcse(
+    results: List[SolverResult],
+    current_index: int = -1,
+    ax: Optional[plt.Axes] = None,
+) -> plt.Axes:
+    """
+    Quantum-Confined Stark Effect panel.
+
+    Given a voltage sweep (multiple SolverResults), plots the e1-h1
+    transition energy and electron-hole wavefunction overlap against
+    applied bias -- the two standard experimental signatures of QCSE:
+    as the internal field grows, the transition energy redshifts and the
+    overlap (proxy for oscillator strength / radiative rate) falls; as an
+    applied bias screens the built-in polarization field, both effects
+    reverse.
+
+    Given a single result (no sweep), reports the same two numbers as text
+    since there's no bias axis to plot against.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(9, 5))
+
+    have = [r for r in results if r.qcse_transition_eV is not None]
+
+    if len(results) <= 1 or len(have) <= 1:
+        r = results[current_index] if results else None
+        ax.axis('off')
+        if r is None or r.qcse_transition_eV is None:
+            ax.text(0.5, 0.5,
+                    'No confined electron-hole pair found.\n'
+                    'Run with Quantum enabled and an undoped quantum well layer.',
+                    ha='center', va='center', fontsize=10, transform=ax.transAxes)
+        else:
+            ax.text(0.5, 0.68, f'$e_1$–$h_1$ transition energy:  {r.qcse_transition_eV:.4f} eV',
+                    ha='center', fontsize=12, transform=ax.transAxes)
+            ax.text(0.5, 0.54,
+                    f'$e_1$–$h_1$ wavefunction overlap  |$\\int\\psi_e\\psi_h\\,dx$|$^2$:  '
+                    f'{r.qcse_overlap * 100:.2f}%',
+                    ha='center', fontsize=12, transform=ax.transAxes)
+            if (r.qcse_dominant_pair is not None
+                    and r.qcse_dominant_pair != (0, 0)
+                    and r.qcse_dominant_overlap is not None
+                    and r.qcse_dominant_overlap > (r.qcse_overlap or 0.0) * 1.5):
+                ie, ih = r.qcse_dominant_pair
+                ax.text(
+                    0.5, 0.38,
+                    f'Note: $e_1$/$h_1$ are localised in different notches (low overlap).\n'
+                    f'Best-overlap pair is $e_{{{ie+1}}}$–$h_{{{ih+1}}}$: '
+                    f'{r.qcse_dominant_transition_eV:.4f} eV, '
+                    f'{r.qcse_dominant_overlap * 100:.2f}% overlap.',
+                    ha='center', fontsize=8.5, color='#a55a00', transform=ax.transAxes)
+            ax.text(0.5, 0.16, 'Run a voltage sweep to see the Stark shift vs bias.',
+                    ha='center', fontsize=9, color='#888888', transform=ax.transAxes)
+        ax.set_title('Quantum-Confined Stark Effect', fontsize=10)
+        return ax
+
+    V   = np.array([r.V_applied for r in have])
+    E_t = np.array([r.qcse_transition_eV for r in have])
+    ov  = np.array([r.qcse_overlap * 100.0 for r in have])
+    order = np.argsort(V)
+    V, E_t, ov = V[order], E_t[order], ov[order]
+
+    ax.plot(V, E_t, color=_COLORS['Ec'], lw=2.0, marker='o', ms=4,
+             label='$E_{e_1h_1}$ (transition energy)')
+    ax.set_xlabel('Applied bias (V)', fontsize=11)
+    ax.set_ylabel('Transition energy (eV)', color=_COLORS['Ec'], fontsize=11)
+    ax.tick_params(axis='y', labelcolor=_COLORS['Ec'])
+    ax.grid(True, alpha=0.3, lw=0.5)
+
+    if results and 0 <= current_index < len(results):
+        r_cur = results[current_index]
+        if r_cur.qcse_transition_eV is not None:
+            ax.axvline(r_cur.V_applied, color='#888888', lw=0.8, ls=':')
+
+    ax2 = ax.twinx()
+    ax2.plot(V, ov, color=_COLORS['p'], lw=1.8, ls='--', marker='s', ms=4,
+              label='$e$-$h$ overlap')
+    ax2.set_ylabel('$e$-$h$ wavefunction overlap (%)', color=_COLORS['p'], fontsize=11)
+    ax2.tick_params(axis='y', labelcolor=_COLORS['p'])
+    ax2.set_ylim(0, max(100.0, float(np.max(ov)) * 1.15) if len(ov) else 100.0)
+
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc='best')
+
+    ax.set_title('Quantum-Confined Stark Effect vs Bias', fontsize=10)
     return ax
 
 

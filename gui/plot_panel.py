@@ -28,7 +28,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from physics.self_consistent import SolverResult
 from visualization.plotter import (
     plot_band_diagram, plot_wavefunctions, plot_carriers,
-    plot_fields, plot_polarization, plot_strain,
+    plot_fields, plot_polarization, plot_strain, plot_qcse,
 )
 from gui.layer_stack import _layer_summary
 
@@ -45,7 +45,15 @@ _PANELS = [
     ("Fields", plot_fields),
     ("Polarization", lambda r, ax=None: plot_polarization(r, ax=ax)[0]),
     ("Strain", plot_strain),
+    ("QCSE", plot_qcse),
 ]
+
+# Panels that need the *whole* loaded result set (plus which index is
+# currently selected) rather than just the currently-selected SolverResult
+# — e.g. QCSE plots the Stark shift/overlap across a voltage sweep. These
+# also skip the position-axis "Zoom to layer" behaviour below, since their
+# x-axis isn't device position.
+_SWEEP_AWARE_PANELS = {"QCSE"}
 
 _FULL_DEVICE = "Full device"
 
@@ -182,8 +190,11 @@ class PlotPanel(ttk.Frame):
         fig, ax, canvas, fn = self._tabs[name]
         ax.clear()
         try:
-            fn(result, ax=ax)
-            self._apply_zoom(ax, result, name)
+            if name in _SWEEP_AWARE_PANELS:
+                fn(self.results, self.current_index, ax=ax)
+            else:
+                fn(result, ax=ax)
+                self._apply_zoom(ax, result, name)
         except Exception as exc:  # noqa: BLE001 - never let a plot crash the app
             ax.text(0.5, 0.5, f"Could not render this panel:\n{exc}",
                      ha="center", va="center", transform=ax.transAxes, wrap=True)

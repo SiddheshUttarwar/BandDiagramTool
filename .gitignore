@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.npz
+
+# Excluded from this repo (dev-only)
+/tests/
+/examples/
+/TestPrograms/
+pytest.ini

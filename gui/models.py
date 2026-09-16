@@ -10,9 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Callable, List, Optional, Union
 
-from devices.layer import AbruptLayer, GradedLayer, Contact
+from devices.layer import (
+    AbruptLayer, GradedLayer, Contact,
+    QuantumRegionMarker, SurfaceCharge, InterfaceDipole,
+)
 
-Layer = Union[AbruptLayer, GradedLayer]
+Layer = Union[AbruptLayer, GradedLayer, QuantumRegionMarker, SurfaceCharge, InterfaceDipole]
 
 
 @dataclass
@@ -20,12 +23,12 @@ class SolveSettings:
     T: float = 300.0
     dx_nm: float = 0.2
     quantum: bool = True
+    include_spontaneous_polarization: bool = False
     n_states_e: int = 16
     n_states_h: int = 16
     max_iter: int = 5000
     tol: float = 1e-6
     alpha: float = 0.15
-    R_series: float = 1e-3
 
     # Bias / sweep
     sweep_mode: bool = False

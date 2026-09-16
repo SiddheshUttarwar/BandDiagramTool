@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 .pytest_cache/
 *.npz
+/results/
 
 # Excluded from this repo (dev-only)
 /tests/

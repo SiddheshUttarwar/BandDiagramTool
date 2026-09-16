@@ -49,6 +49,33 @@ def compute_Psp(x_Al: np.ndarray, T: float = 300.0) -> np.ndarray:
     return Psp300 + (T - 300.0) * p_x
 
 
+def _elastic_constants(x_Al: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-point C13/C33 [Pa] from physics.materials.algan -- the single
+    source of truth for composition-dependent material constants (avoids
+    the elastic/piezoelectric constants here silently drifting out of sync
+    with the ones get_AlGaN_params actually returns, as they previously
+    had after algan.py was updated to NSM Archive values but this module's
+    own hardcoded duplicates weren't)."""
+    x = np.atleast_1d(np.asarray(x_Al, dtype=float))
+    C13 = np.array([get_AlGaN_params(xi).C13 for xi in x])
+    C33 = np.array([get_AlGaN_params(xi).C33 for xi in x])
+    return C13, C33
+
+
+def eps_zz_from_eps_xx(x_Al: np.ndarray, eps_xx: np.ndarray) -> np.ndarray:
+    """
+    Out-of-plane strain implied by a given in-plane biaxial strain, via the
+    elastic (Poisson relaxation) relation eps_zz = -2*(C13/C33)*eps_xx.
+    Used both for pseudomorphic strain (below) and for a layer's
+    user-specified custom eps_xx (devices.layer.*.custom_strain_xx,
+    consumed in devices.grid_builder) -- eps_zz is never an independent
+    free parameter under the biaxial-strain approximation this tool uses,
+    so a custom strain only ever sets eps_xx and this derives eps_zz.
+    """
+    C13, C33 = _elastic_constants(x_Al)
+    return -2.0 * (C13 / C33) * np.asarray(eps_xx, dtype=float)
+
+
 def compute_strain(x_Al: np.ndarray, x_sub: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Biaxial strain for pseudomorphic AlGaN on a substrate with Al composition x_sub.
@@ -63,18 +90,11 @@ def compute_strain(x_Al: np.ndarray, x_sub: float) -> tuple[np.ndarray, np.ndarr
     """
     x = np.asarray(x_Al, dtype=float)
 
-    # Substrate lattice constant (Vegard's law, Angstrom)
-    a_sub = x_sub * 3.112 + (1.0 - x_sub) * 3.189
-
-    # Layer lattice constant (unstrained)
-    a_layer = x * 3.112 + (1.0 - x) * 3.189
-
-    # Elastic constants [Pa] (linear interpolation)
-    C13 = (x * 108.0 + (1.0 - x) * 103.0) * 1e9
-    C33 = (x * 373.0 + (1.0 - x) * 405.0) * 1e9
+    a_sub = get_AlGaN_params(x_sub).a0
+    a_layer = np.array([get_AlGaN_params(xi).a0 for xi in x])   # unstrained
 
     eps_xx = (a_sub - a_layer) / a_layer           # positive when substrate is larger
-    eps_zz = -2.0 * (C13 / C33) * eps_xx          # out-of-plane (Poisson relaxation)
+    eps_zz = eps_zz_from_eps_xx(x, eps_xx)          # out-of-plane (Poisson relaxation)
 
     return eps_xx, eps_zz
 
@@ -87,14 +107,14 @@ def compute_Ppz(x_Al: np.ndarray,
 
     Ppz = e33 * eps_zz + 2 * e31 * eps_xx
 
-    where e33 and e31 are composition-dependent (linear interpolation).
+    where e33 and e31 are composition-dependent (physics.materials.algan).
     """
     x   = np.asarray(x_Al,  dtype=float)
     exx = np.asarray(eps_xx, dtype=float)
     ezz = np.asarray(eps_zz, dtype=float)
 
-    e33 = x * 1.56  + (1.0 - x) * 0.87
-    e31 = x * (-0.62) + (1.0 - x) * (-0.50)
+    e33 = np.array([get_AlGaN_params(xi).e33 for xi in x])
+    e31 = np.array([get_AlGaN_params(xi).e31 for xi in x])
 
     return e33 * ezz + 2.0 * e31 * exx
 
@@ -138,8 +158,9 @@ def compute_quasi_field(x_Al: np.ndarray,
     independently of any electrostatic potential:
         F_quasi = (1/q) * d(chi(x))/dz
 
-    where chi(x) = 4.1 - 2.2*x [eV] is the electron affinity.
-    This is separate from and additive to the Poisson-solved field F = -dphi/dz.
+    where chi(x) is the composition-dependent electron affinity
+    (physics.materials.algan.get_AlGaN_params). This is separate from and
+    additive to the Poisson-solved field F = -dphi/dz.
 
     dx : scalar (uniform) or length-(N-1) array of per-edge spacings
     (non-uniform; see physics.grid_utils).
@@ -149,10 +170,7 @@ def compute_quasi_field(x_Al: np.ndarray,
     F_quasi [V/m] (positive = pointing in +z direction, i.e., toward surface)
     """
     x   = np.asarray(x_Al, dtype=float)
-    # Use 65:35 offset ratio consistent with algan.py
-    Eg = x * 6.12 + (1.0 - x) * 3.44 - 0.7 * x * (1.0 - x)
-    Eg_GaN = 3.44
-    chi = 4.1 - 0.65 * (Eg - Eg_GaN)   # electron affinity [eV]
+    chi = np.array([get_AlGaN_params(xi).chi for xi in x])   # electron affinity [eV]
 
     # dchi/dz in eV/m → V/m (chi is in eV, dz in m)
     return central_difference(chi, dx)

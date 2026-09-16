@@ -8,8 +8,18 @@ import json
 from dataclasses import asdict
 from typing import Any, Dict
 
-from devices.layer import AbruptLayer, GradedLayer, Contact
+from devices.layer import (
+    AbruptLayer, GradedLayer, Contact,
+    QuantumRegionMarker, SurfaceCharge, SurfaceState, InterfaceDipole,
+)
 from gui.models import DeviceModel, SolveSettings
+
+_LAYER_TYPES = {
+    'AbruptLayer': AbruptLayer,
+    'GradedLayer': GradedLayer,
+    'QuantumRegionMarker': QuantumRegionMarker,
+    'InterfaceDipole': InterfaceDipole,
+}
 
 
 def _layer_to_dict(layer) -> Dict[str, Any]:
@@ -21,11 +31,18 @@ def _layer_to_dict(layer) -> Dict[str, Any]:
 def _layer_from_dict(d: Dict[str, Any]):
     d = dict(d)
     kind = d.pop('type')
-    if kind == 'AbruptLayer':
-        return AbruptLayer(**d)
-    if kind == 'GradedLayer':
-        return GradedLayer(**d)
-    raise ValueError(f"Unknown layer type in project file: {kind!r}")
+    # Drop fields no longer part of the dataclass (e.g. quantum_region_start/
+    # end, removed when quantum-region markers became their own layer type),
+    # so older project files still load rather than hard-failing.
+    if kind == 'SurfaceCharge':
+        states = [SurfaceState(**s) for s in d.get('states', [])]
+        return SurfaceCharge(states=states)
+    cls = _LAYER_TYPES.get(kind)
+    if cls is None:
+        raise ValueError(f"Unknown layer type in project file: {kind!r}")
+    known = {f for f in cls.__dataclass_fields__}
+    kwargs = {k: v for k, v in d.items() if k in known}
+    return cls(**kwargs)
 
 
 def model_to_dict(model: DeviceModel) -> Dict[str, Any]:

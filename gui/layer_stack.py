@@ -12,14 +12,20 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, List, Optional
 
-from devices.layer import AbruptLayer, GradedLayer
+from devices.layer import (
+    AbruptLayer, GradedLayer, QuantumRegionMarker, SurfaceCharge, InterfaceDipole,
+)
 from gui.models import DeviceModel
 
 _CARD_BG = "#ffffff"
 _CARD_BG_SELECTED = "#e8f0fe"
+_CARD_BG_INTERFACE = "#fff8e1"           # zero-thickness interface layers get a tint
+_CARD_BG_INTERFACE_SELECTED = "#e8f0fe"
 _CARD_BORDER = "#d0d5dd"
 _CARD_BORDER_SELECTED = "#4285f4"
 _HANDLE_FG = "#9aa0a6"
+
+_INTERFACE_TYPES = (QuantumRegionMarker, SurfaceCharge, InterfaceDipole)
 
 
 def _layer_summary(layer) -> tuple[str, str]:
@@ -40,6 +46,19 @@ def _layer_summary(layer) -> tuple[str, str]:
         if layer.p_doping > 0:
             bits.append(f"p={layer.p_doping:.1e}")
         return title, "  ·  ".join(bits)
+    if isinstance(layer, QuantumRegionMarker):
+        title = "▶ Quantum region start" if layer.boundary == 'start' else "Quantum region end ◀"
+        return title, "marker · 0 nm"
+    if isinstance(layer, SurfaceCharge):
+        title = "Surface charge"
+        n = len(layer.states)
+        bits = [f"{n} state{'s' if n != 1 else ''}"]
+        for s in layer.states[:3]:
+            bits.append(f"{s.state_type[0].upper()} {s.density_cm2:.1e}cm⁻² @{s.energy_eV:g}eV")
+        return title, "  ·  ".join(bits)
+    if isinstance(layer, InterfaceDipole):
+        title = "Interface dipole"
+        return title, f"±{layer.sheet_charge_C_m2:.2e} C/m²  ·  {layer.separation_nm:g} nm sep."
     return "Layer", ""
 
 
@@ -71,6 +90,10 @@ class LayerStackPanel(ttk.Frame):
         menu = tk.Menu(add_btn, tearoff=False)
         menu.add_command(label="Abrupt layer", command=self._add_abrupt)
         menu.add_command(label="Graded layer", command=self._add_graded)
+        menu.add_separator()
+        menu.add_command(label="Quantum region marker", command=self._add_quantum_marker)
+        menu.add_command(label="Surface charge", command=self._add_surface_charge)
+        menu.add_command(label="Interface dipole", command=self._add_interface_dipole)
         add_btn["menu"] = menu
         add_btn.pack(side="right")
 
@@ -109,6 +132,20 @@ class LayerStackPanel(ttk.Frame):
         self.model.add_layer(GradedLayer(x_Al_start=0.0, x_Al_end=0.2, thickness_nm=10.0))
         self.select(len(self.model.layers) - 1)
 
+    def _add_quantum_marker(self):
+        self.model.add_layer(QuantumRegionMarker(boundary='start'))
+        self.select(len(self.model.layers) - 1)
+
+    def _add_surface_charge(self):
+        from devices.layer import SurfaceState
+        self.model.add_layer(SurfaceCharge(
+            states=[SurfaceState(density_cm2=1e12, energy_eV=0.1, state_type='donor')]))
+        self.select(len(self.model.layers) - 1)
+
+    def _add_interface_dipole(self):
+        self.model.add_layer(InterfaceDipole(sheet_charge_C_m2=1e-3, separation_nm=0.5))
+        self.select(len(self.model.layers) - 1)
+
     # ------------------------------------------------------------------
     def select(self, index: Optional[int]):
         self.selected_index = index
@@ -133,8 +170,13 @@ class LayerStackPanel(ttk.Frame):
     def _build_card(self, model_index: int):
         layer = self.model.layers[model_index]
         selected = (model_index == self.selected_index)
+        is_interface = isinstance(layer, _INTERFACE_TYPES)
 
-        card = tk.Frame(self._inner, bg=_CARD_BG_SELECTED if selected else _CARD_BG,
+        if selected:
+            bg = _CARD_BG_INTERFACE_SELECTED if is_interface else _CARD_BG_SELECTED
+        else:
+            bg = _CARD_BG_INTERFACE if is_interface else _CARD_BG
+        card = tk.Frame(self._inner, bg=bg,
                          highlightbackground=_CARD_BORDER_SELECTED if selected else _CARD_BORDER,
                          highlightthickness=2, bd=0)
         card.pack(fill="x", padx=6, pady=4)

@@ -17,8 +17,10 @@ so it survives redraws until the user changes it back to "Full device".
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from tkinter.scrolledtext import ScrolledText
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -30,7 +32,17 @@ from visualization.plotter import (
     plot_band_diagram, plot_wavefunctions, plot_carriers,
     plot_fields, plot_polarization, plot_strain, plot_qcse,
 )
+from visualization.csv_export import save_and_reload_csv, result_filename
 from gui.layer_stack import _layer_summary
+
+# Every solve's per-grid-point profiles are written here as CSV, then read
+# back before plotting -- see visualization.csv_export.save_and_reload_csv.
+# Each file is named '<project>_Bias_<V>V_Temp_<T>K.csv' (see
+# visualization.csv_export.result_filename); a sweep writes one file per
+# voltage step, so re-running a solve at the same bias/temperature
+# overwrites that step's file rather than accumulating stale ones.
+_RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
+_DEFAULT_PROJECT_NAME = "untitled"
 
 _PANELS = [
     ("Band Diagram", plot_band_diagram),
@@ -63,7 +75,7 @@ _FULL_DEVICE = "Full device"
 # PolyCollections these panels use, and would autoscale from the *full*
 # device's data regardless of the current xlim, not just the visible slice).
 _Y_FIELDS = {
-    "Band Diagram": ["Ec", "Ev", "Ei", "Efn", "Efp"],
+    "Band Diagram": ["Ec", "Ev", "Ev_lh", "Ev_so", "Ei", "Efn", "Efp"],
     "Wavefunctions": ["Ec", "Ev", "Ei", "Efn", "Efp"],
     "Carriers": ["n", "p"],
     "Fields": ["E_field", "F_quasi"],
@@ -91,6 +103,22 @@ class PlotPanel(ttk.Frame):
         status_bar.pack(fill="x", side="bottom", padx=6, pady=4)
         ttk.Label(status_bar, textvariable=self._status_var).pack(side="left")
         ttk.Button(status_bar, text="Export PNG…", command=self._export_png).pack(side="right")
+
+        # --- Solver log: streams physics.self_consistent's verbose=True
+        # per-iteration output live while a solve runs in the background
+        # (see gui.solve_worker's stdout-redirect capture). ---
+        log_controls = ttk.Frame(self)
+        log_controls.pack(fill="x", side="bottom", padx=6)
+        self._log_visible = tk.BooleanVar(value=True)
+        ttk.Checkbutton(log_controls, text="Show solver log", variable=self._log_visible,
+                         command=self._toggle_log).pack(side="left")
+        ttk.Button(log_controls, text="Clear log", command=self.clear_log).pack(side="left", padx=6)
+
+        self._log_frame = ttk.LabelFrame(self, text="Solver Log")
+        self._log_text = ScrolledText(self._log_frame, height=8, state="disabled",
+                                       wrap="none", font=("Consolas", 9))
+        self._log_text.pack(fill="both", expand=True, padx=4, pady=4)
+        self._log_frame.pack(fill="x", side="bottom", padx=6, pady=(0, 4))
 
         zoom_frame = ttk.Frame(self)
         zoom_frame.pack(fill="x", padx=6, pady=(4, 0))
@@ -132,16 +160,43 @@ class PlotPanel(ttk.Frame):
     def set_status(self, text: str):
         self._status_var.set(text)
 
-    def show_result(self, result: SolverResult, layers: Optional[list] = None):
+    def append_log(self, text: str) -> None:
+        self._log_text.configure(state="normal")
+        self._log_text.insert("end", text + "\n")
+        self._log_text.see("end")
+        self._log_text.configure(state="disabled")
+
+    def clear_log(self) -> None:
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.configure(state="disabled")
+
+    def _toggle_log(self) -> None:
+        if self._log_visible.get():
+            self._log_frame.pack(fill="x", side="bottom", padx=6, pady=(0, 4))
+        else:
+            self._log_frame.pack_forget()
+
+    def _csv_roundtrip(self, result: SolverResult, project_name: str) -> SolverResult:
+        os.makedirs(_RESULTS_DIR, exist_ok=True)
+        stem = result_filename(project_name, result.V_applied, result.T)
+        path = os.path.join(_RESULTS_DIR, f"{stem}.csv")
+        return save_and_reload_csv(result, path)
+
+    def show_result(self, result: SolverResult, layers: Optional[list] = None,
+                     project_name: str = _DEFAULT_PROJECT_NAME):
+        result = self._csv_roundtrip(result, project_name)
         self.results = [result]
         self.current_index = 0
         self._slider_frame.pack_forget()
         self._update_zoom_choices(layers, qw_range_nm=result.qw_window_nm)
         self._redraw_current()
 
-    def show_sweep(self, results: List[SolverResult], layers: Optional[list] = None):
+    def show_sweep(self, results: List[SolverResult], layers: Optional[list] = None,
+                    project_name: str = _DEFAULT_PROJECT_NAME):
         if not results:
             return
+        results = [self._csv_roundtrip(r, project_name) for r in results]
         self.results = results
         self.current_index = len(results) - 1
         self._slider.configure(from_=0, to=max(0, len(results) - 1))
@@ -168,7 +223,9 @@ class PlotPanel(ttk.Frame):
         if layers:
             start = 0.0
             for i, layer in enumerate(layers):
-                thickness = layer.thickness_nm
+                thickness = getattr(layer, 'thickness_nm', None)
+                if thickness is None:
+                    continue   # zero-thickness interface layer (marker/surface charge/dipole): no zoom span of its own
                 end = start + thickness
                 title, _ = _layer_summary(layer)
                 label = f"#{i + 1} {title} ({start:.1f}–{end:.1f} nm)"

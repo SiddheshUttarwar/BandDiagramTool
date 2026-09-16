@@ -4,7 +4,9 @@ Band diagram visualization for AlGaN heterostructures.
 BandDiagramPlotter wraps a SolverResult and produces publication-quality figures.
 
 Panels available:
-  plot_band_diagram()   — Ec, Ev, Efn, Efp, Ei, vacuum level + composition background
+  plot_band_diagram()   — Ec, Ev, Efn, Efp, Ei, vacuum level + composition
+                           background, and Mott-transition (physics.mott)
+                           diagnostic shading (toggle: show_mott)
   plot_wavefunctions()  — |psi_n|^2 overlaid on band diagram
   plot_carriers()       — n(x) and p(x) on log scale
   plot_fields()         — electrostatic + quasi-electric + total field
@@ -19,13 +21,21 @@ from __future__ import annotations
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import scienceplots  # noqa: F401 - registers the 'science' style family on import
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 from typing import List, Optional
 
 from physics.self_consistent import SolverResult
 from physics.constants import q as _q
+from physics.mott import donor_mott_density_cm3, acceptor_mott_density_cm3
+
+# 'no-latex' variant: 'science' alone requires a LaTeX installation (text.usetex),
+# which most machines running this tool won't have; this keeps the same
+# typography/spine/tick styling using matplotlib's built-in mathtext instead.
+# Applied at import time so every panel in this module picks it up; per-plot
+# colors/linewidths set explicitly below still override these style defaults.
+plt.style.use(['science', 'no-latex'])
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +44,9 @@ from physics.constants import q as _q
 
 _COLORS = {
     'Ec':   '#1f77b4',   # blue
-    'Ev':   '#2ca02c',   # green
+    'Ev':   '#2ca02c',   # green (Ev == Ev_hh, the heavy-hole edge)
+    'Ev_lh': '#9467bd',  # purple -- distinct from Ev/Ev_so, not a green shade
+    'Ev_so': '#8c564b',  # brown -- distinct from Ev/Ev_lh, not a green shade
     'Efn':  '#d62728',   # red
     'Efp':  '#ff7f0e',   # orange
     'Ei':   '#7f7f7f',   # gray
@@ -69,12 +81,76 @@ def _composition_background(ax, x_nm: np.ndarray, x_Al: np.ndarray,
         ax.add_patch(rect)
 
 
-def _interface_lines(ax, r: SolverResult, y_min: float, y_max: float,
-                     color: str = '#555555', lw: float = 0.6) -> None:
-    """Draw vertical dashed lines at abrupt heterointerfaces."""
-    for idx in r.interface_indices:
-        xpos = r.x_nm[idx]
-        ax.axvline(xpos, color=color, lw=lw, ls='--', alpha=0.6)
+def _shaded_spans(ax, x_nm: np.ndarray, mask: np.ndarray,
+                   color, label: str, alpha: float = 0.16, hatch: Optional[str] = None) -> None:
+    """Shade each contiguous True-run of `mask` as a full-height axvspan;
+    only the first span carries the legend label so it isn't repeated."""
+    mask = np.asarray(mask, dtype=bool)
+    if not np.any(mask):
+        return
+    edges = np.diff(mask.astype(int))
+    starts = list(np.where(edges == 1)[0] + 1)
+    ends = list(np.where(edges == -1)[0] + 1)
+    if mask[0]:
+        starts = [0] + starts
+    if mask[-1]:
+        ends = ends + [len(mask) - 1]
+    first = True
+    for s, e in zip(starts, ends):
+        ax.axvspan(x_nm[s], x_nm[min(e, len(x_nm) - 1)], color=color, alpha=alpha,
+                   hatch=hatch, label=label if first else None, zorder=0)
+        first = False
+
+
+def _legend_right(ax, fontsize=9, ncol=1) -> None:
+    """Place the legend outside the axes, to the right, so it can never
+    cover any of the plotted data -- these panels plot device-spanning
+    profiles (composition/doping shaded the whole width), so there is
+    often no empty pocket inside the axes for loc='best' to land in
+    without covering a curve. tight_layout() then shrinks the axes to
+    make room, so the plot itself never gets covered by the legend box."""
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    ax.legend(handles, labels, fontsize=fontsize, loc='upper left',
+              bbox_to_anchor=(1.02, 1.0), borderaxespad=0., ncol=ncol,
+              frameon=True)
+    fig = ax.get_figure()
+    if fig is not None:
+        fig.tight_layout()
+
+
+def _legend_above(ax, fontsize=9, ncol=3) -> None:
+    """Place the legend outside the axes, above it -- for panels where a
+    twin y-axis or a neighbouring subplot already occupies the right
+    margin (see _legend_right). Anchored well clear of y=1.0 so it doesn't
+    collide with the axes title, which sits just above the top spine."""
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    ax.legend(handles, labels, fontsize=fontsize, loc='lower center',
+              bbox_to_anchor=(0.5, 1.14), borderaxespad=0., ncol=ncol,
+              frameon=True)
+    fig = ax.get_figure()
+    if fig is not None:
+        fig.tight_layout()
+
+
+def _mott_background(ax, r: SolverResult) -> None:
+    """
+    Mott transition (physics.mott): shaded wherever local doping exceeds
+    the composition-dependent Mott critical density -- a genuine
+    threshold/delocalization criterion, so shown as an on/off region.
+
+    Diagnostic overlay only -- see physics.mott's docstring for exactly
+    what it does and doesn't model, and physics.self_consistent's docstring
+    for what the solver's actual carrier-density physics uses.
+    """
+    N_mott_donor = donor_mott_density_cm3(r.x_Al)
+    N_mott_acceptor = acceptor_mott_density_cm3(r.x_Al)
+    mott_mask = (r.ND > N_mott_donor) | (r.NA > N_mott_acceptor)
+    _shaded_spans(ax, r.x_nm, mott_mask, color='#9467bd',
+                 label='Mott transition (doping > $N_{Mott}$)', alpha=0.16)
 
 
 # ---------------------------------------------------------------------------
@@ -86,59 +162,103 @@ def plot_band_diagram(
     ax: Optional[plt.Axes] = None,
     show_vacuum: bool = True,
     show_composition_bg: bool = True,
+    show_mott: bool = True,
+    show_valence_bands: bool = True,
     annotate: bool = True,
     title: str | None = None,
 ) -> plt.Axes:
     """
-    Panel 1: Ec, Ev, Efn, Efp, Ei, and optional vacuum level.
-    Background is shaded by Al composition.
+    Panel 1: Ec, Ev (HH), Efn, Efp, Ei, optional vacuum level, and (if
+    show_valence_bands) the LH/SO valence band edges alongside Ev -- the
+    decoupled 3-band effective-mass model (see physics.materials.algan.
+    AlGaNParams.valence_band_structure; physics.self_consistent solves each
+    band's confined states independently, no HH-LH-SO mixing).
+    Background is shaded by Al composition, and (if show_mott) by the
+    Mott-transition diagnostic -- see physics.mott for what it does and
+    doesn't model.
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 5))
 
     x = r.x_nm
+    Ev_lh = getattr(r, 'Ev_lh', None)
+    Ev_so = getattr(r, 'Ev_so', None)
+    have_valence_bands = show_valence_bands and Ev_lh is not None and Ev_so is not None
 
     y_min = float(np.min(r.Ev)) - 0.3
     y_max = float(np.max(r.Ec)) + 0.5
+    if have_valence_bands:
+        y_min = min(y_min, float(np.min(Ev_lh)) - 0.3, float(np.min(Ev_so)) - 0.3)
+        y_max = max(y_max, float(np.max(Ev_lh)) + 0.3, float(np.max(Ev_so)) + 0.3)
+
+    # Vacuum level = Ec + chi(x). chi (electron affinity) is several eV, so
+    # E_vac sits well above Ec -- if it's being shown, the y-range computed
+    # from Ec/Ev alone clips it off the top of the axis entirely.
+    E_vac = None
+    if show_vacuum:
+        from physics.materials.algan import get_AlGaN_params
+        chi_arr = np.array([get_AlGaN_params(xi).chi for xi in r.x_Al])
+        E_vac = r.Ec + chi_arr
+        y_max = max(y_max, float(np.max(E_vac)) + 0.2)
 
     if show_composition_bg:
         _composition_background(ax, x, r.x_Al, y_min, y_max)
 
-    _interface_lines(ax, r, y_min, y_max)
+    if show_mott:
+        _mott_background(ax, r)
 
-    ax.plot(x, r.Ec, color=_COLORS['Ec'],  lw=2.0, label='$E_c$')
-    ax.plot(x, r.Ev, color=_COLORS['Ev'],  lw=2.0, label='$E_v$')
+    ax.plot(x, r.Ec, color=_COLORS['Ec'],  lw=1.3, label='$E_c$')
+    ax.plot(x, r.Ev, color=_COLORS['Ev'],  lw=1.3,
+            label='$E_v$ (HH)' if have_valence_bands else '$E_v$')
+    if have_valence_bands:
+        ax.plot(x, Ev_lh, color=_COLORS['Ev_lh'], lw=1.1, label='$E_v$ (LH)')
+        ax.plot(x, Ev_so, color=_COLORS['Ev_so'], lw=1.1, label='$E_v$ (SO)')
     ax.plot(x, r.Ei, color=_COLORS['Ei'],  lw=1.0, ls=':', label='$E_i$')
 
     # Quasi-Fermi levels (now arrays)
     # They might contain NaNs in some highly depleted regions, or just be plotted directly
-    ax.plot(x, r.Efn, color=_COLORS['Efn'], lw=1.5, ls='--', label='$E_{fn}$')
-    ax.plot(x, r.Efp, color=_COLORS['Efp'], lw=1.5, ls='--', label='$E_{fp}$')
+    ax.plot(x, r.Efn, color=_COLORS['Efn'], lw=1.5, ls='--', label='$E_{fc}$')
+    ax.plot(x, r.Efp, color=_COLORS['Efp'], lw=1.5, ls='--', label='$E_{fv}$')
 
     if show_vacuum:
-        # Vacuum level = Ec + chi(x)
-        from physics.materials.algan import get_AlGaN_params
-        chi_arr = np.array([get_AlGaN_params(xi).chi for xi in r.x_Al])
-        E_vac = r.Ec + chi_arr
         ax.plot(x, E_vac, color=_COLORS['vac'], lw=1.0, ls='-.',
                 label='$E_{vac}$', alpha=0.7)
 
-    if annotate and len(r.interface_indices) > 0:
-        for idx, sigma in zip(r.interface_indices, r.interface_sigmas):
-            if abs(sigma) > 1e-3:
-                xpos = r.x_nm[idx]
-                label = f'σ={sigma*1e2:.1f} mC/m²'
-                ax.annotate(label, xy=(xpos, y_max - 0.2),
-                            ha='center', fontsize=7, color='#333333',
-                            rotation=90, va='top')
+    # Surface/interface charge trap levels (devices.layer.SurfaceCharge):
+    # a marker at each state's (x, Ec-energy or Ev+energy) so Fermi-level
+    # pinning -- Efn/Efp settling onto this level once the state's areal
+    # density is high enough to dominate local charge balance -- is
+    # something you can see directly rather than infer.
+    if annotate and getattr(r, 'surface_charge_markers', None):
+        for xpos, level, state_type, density_cm2 in r.surface_charge_markers:
+            color = '#1a9850' if state_type == 'donor' else '#762a83'
+            ax.plot(xpos, level, marker='_', markersize=14, markeredgewidth=2.5, color=color, zorder=5)
+            ax.annotate(f'{state_type[0].upper()} trap\n{density_cm2:.1e} cm$^{{-2}}$',
+                        xy=(xpos, level), xytext=(6, 0), textcoords='offset points',
+                        ha='left', va='center', fontsize=6.5, color=color)
 
     ax.set_xlabel('Position (nm)', fontsize=11)
     ax.set_ylabel('Energy (eV)',    fontsize=11)
     ax.set_xlim(x[0], x[-1])
     ax.set_ylim(y_min, y_max)
-    ax.legend(fontsize=8, loc='best', ncol=2)
-    ax.set_title(title or f'Band Diagram  (V = {r.V_applied:.2f} V, T = {r.T:.0f} K)',
-                 fontsize=10)
+    _legend_right(ax, fontsize=8, ncol=1)
+    if title:
+        ax.set_title(title, fontsize=10)
+    else:
+        V_internal = getattr(r, 'V_internal', r.V_applied)
+        # Series-resistance IR drop (physics.self_consistent's R_series
+        # relaxation of V_internal) can leave the voltage actually applied
+        # across the intrinsic device well below V_applied at high bias --
+        # surfacing both here instead of just V_applied is what makes a
+        # collapsed V_internal visible instead of a diagram that's
+        # mysteriously flat despite being labeled at the requested bias.
+        if abs(V_internal - r.V_applied) > 0.01:
+            label = (f'Band Diagram  (V$_{{applied}}$ = {r.V_applied:.2f} V, '
+                      f'V$_{{internal}}$ = {V_internal:.2f} V -- IR drop across '
+                      f'R$_{{series}}$, T = {r.T:.0f} K)')
+        else:
+            label = f'Band Diagram  (V = {r.V_applied:.2f} V, T = {r.T:.0f} K)'
+        ax.set_title(label, fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
     return ax
 
@@ -156,8 +276,12 @@ def plot_wavefunctions(
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 5))
 
-    ax = plot_band_diagram(r, ax=ax, show_vacuum=False, annotate=False,
-                           title='Wavefunctions')
+    # LH/SO band edges are hidden here: only the HH wavefunctions (psi_h)
+    # are drawn below, so showing LH/SO curves with no matching
+    # wavefunction overlay would just be visual clutter with no state to
+    # anchor it to.
+    ax = plot_band_diagram(r, ax=ax, show_vacuum=False, show_valence_bands=False,
+                           annotate=False, title='Wavefunctions')
 
     if r.psi_e is None or r.E_e is None:
         ax.set_title('Wavefunctions (run with quantum=True)')
@@ -226,12 +350,10 @@ def plot_carriers(
     ax.semilogy(x, n_safe, color=_COLORS['n'], lw=1.8, label='$n$ (electrons)')
     ax.semilogy(x, p_safe, color=_COLORS['p'], lw=1.8, label='$p$ (holes)')
 
-    _interface_lines(ax, r, 0, 1e25)
-
     ax.set_xlabel('Position (nm)', fontsize=11)
     ax.set_ylabel('Carrier density (cm$^{-3}$)', fontsize=11)
     ax.set_xlim(x[0], x[-1])
-    ax.legend(fontsize=9)
+    _legend_right(ax, fontsize=9)
     ax.set_title(f'Carrier Density  (V = {r.V_applied:.2f} V)', fontsize=10)
     ax.grid(True, which='both', alpha=0.3, lw=0.5)
     return ax
@@ -263,13 +385,12 @@ def plot_fields(
     ax.plot(x, F_total, color=_COLORS['Ftot'],   lw=1.8, ls='-.',
             label='$F_{total}$', alpha=0.8)
 
-    _interface_lines(ax, r, min(F_total.min(), -0.01), max(F_total.max(), 0.01))
     ax.axhline(0, color='black', lw=0.5, ls=':')
 
     ax.set_xlabel('Position (nm)', fontsize=11)
     ax.set_ylabel(ylabel, fontsize=11)
     ax.set_xlim(x[0], x[-1])
-    ax.legend(fontsize=9)
+    _legend_right(ax, fontsize=9)
     ax.set_title('Electric Fields', fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
     return ax
@@ -293,11 +414,13 @@ def plot_polarization(
     ax.plot(x, r.Ppz,     color=_COLORS['Ppz'],  lw=1.8, label='$P_{pz}$')
     ax.plot(x, r.P_total, color=_COLORS['Ptot'], lw=2.0, label='$P_{total}$')
 
-    _interface_lines(ax, r, r.P_total.min() - 0.002, r.P_total.max() + 0.002)
     ax.set_xlabel('Position (nm)', fontsize=11)
     ax.set_ylabel('Polarization (C/m²)', fontsize=11)
     ax.set_xlim(x[0], x[-1])
-    ax.legend(fontsize=9)
+    # Placed above (not _legend_right) since ax_bar, when the caller
+    # supplies one, sits immediately to ax's right and would collide with
+    # a right-hand legend.
+    _legend_above(ax, fontsize=9, ncol=3)
     ax.set_title('Polarization', fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
 
@@ -333,13 +456,10 @@ def plot_strain(
     ax.plot(x, r.eps_zz * 100, color=_COLORS['ezz'], lw=1.8, label='$\\varepsilon_{zz}$ (%)')
     ax.axhline(0, color='black', lw=0.5, ls=':')
 
-    _interface_lines(ax, r, min(r.eps_zz.min(), r.eps_xx.min()) * 100 - 0.05,
-                     max(r.eps_zz.max(), r.eps_xx.max()) * 100 + 0.05)
-
     ax.set_xlabel('Position (nm)', fontsize=11)
     ax.set_ylabel('Strain (%)', fontsize=11)
     ax.set_xlim(x[0], x[-1])
-    ax.legend(fontsize=9)
+    _legend_right(ax, fontsize=9)
     ax.set_title('Strain', fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
     return ax
@@ -443,7 +563,12 @@ def plot_qcse(
 
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc='best')
+    # Above, not _legend_right: ax2 (twinx) already owns the right margin
+    # for its own y-axis label/ticks.
+    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8,
+              loc='lower center', bbox_to_anchor=(0.5, 1.14),
+              borderaxespad=0., ncol=2, frameon=True)
+    ax.get_figure().tight_layout()
 
     ax.set_title('Quantum-Confined Stark Effect vs Bias', fontsize=10)
     return ax

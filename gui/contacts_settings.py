@@ -58,6 +58,7 @@ class SettingsPanel(ttk.LabelFrame):
         super().__init__(parent, text="Settings", **kwargs)
         self.model = model
         self._apply_after_ids: dict = {}
+        self._field_vars: dict = {}   # attr -> (StringVar, cast) for flush_pending
         s = model.settings
 
         self._row_entry(self, "Temperature (K)", "T", s.T)
@@ -68,6 +69,12 @@ class SettingsPanel(ttk.LabelFrame):
                          variable=quantum_var,
                          command=lambda: self._set("quantum", quantum_var.get())
                          ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        psp_var = tk.BooleanVar(value=s.include_spontaneous_polarization)
+        ttk.Checkbutton(self, text="Add spontaneous polarization in band diagram calculations",
+                         variable=psp_var,
+                         command=lambda: self._set("include_spontaneous_polarization", psp_var.get())
+                         ).pack(anchor="w", padx=8, pady=(0, 2))
 
         ttk.Separator(self).pack(fill="x", padx=8, pady=6)
 
@@ -91,7 +98,6 @@ class SettingsPanel(ttk.LabelFrame):
         self._row_entry(self._adv_frame, "Max iterations", "max_iter", s.max_iter, cast=int)
         self._row_entry(self._adv_frame, "Tolerance (V)", "tol", s.tol)
         self._row_entry(self._adv_frame, "Damping alpha", "alpha", s.alpha)
-        self._row_entry(self._adv_frame, "Series R (Ω·cm²)", "R_series", s.R_series)
         self._row_entry(self._adv_frame, "Electron subbands", "n_states_e", s.n_states_e, cast=int)
         self._row_entry(self._adv_frame, "Hole subbands", "n_states_h", s.n_states_h, cast=int)
 
@@ -104,6 +110,7 @@ class SettingsPanel(ttk.LabelFrame):
         entry = ttk.Entry(row, textvariable=var, width=10)
         entry.pack(side="left")
         var.trace_add("write", lambda *a: self._debounced_set_cast(attr, var, cast))
+        self._field_vars[attr] = (var, cast)
         return var
 
     def _set(self, attr, value):
@@ -126,7 +133,25 @@ class SettingsPanel(ttk.LabelFrame):
         if pending is not None:
             self.after_cancel(pending)
         self._apply_after_ids[attr] = self.after(
-            _APPLY_DEBOUNCE_MS, lambda: self._set_cast(attr, var.get(), cast))
+            _APPLY_DEBOUNCE_MS, lambda: self._flush_one(attr, var, cast))
+
+    def _flush_one(self, attr, var, cast):
+        self._apply_after_ids.pop(attr, None)
+        self._set_cast(attr, var.get(), cast)
+
+    def flush_pending(self) -> None:
+        """Immediately apply any field edit still waiting on its debounce
+        timer (e.g. Applied bias), instead of leaving it to land up to
+        400ms later. Called before a solve starts (see
+        App._request_solve_now) so a value just typed isn't silently
+        solved-over with its pre-edit value -- this was letting "Solve
+        Now" clicked right after typing a new bias run at the *old* bias
+        with no visible error, looking like the biased solve was ignored."""
+        for attr, after_id in list(self._apply_after_ids.items()):
+            self.after_cancel(after_id)
+            self._apply_after_ids.pop(attr, None)
+            var, cast = self._field_vars[attr]
+            self._set_cast(attr, var.get(), cast)
 
     # ------------------------------------------------------------------
     def _toggle_sweep(self):

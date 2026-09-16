@@ -7,6 +7,7 @@ together. Handles debounced live re-solve, sweeps, and the File menu
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Optional
@@ -16,10 +17,9 @@ from gui.layer_stack import LayerStackPanel
 from gui.layer_editor import LayerEditorPanel
 from gui.contacts_settings import ContactsPanel, SettingsPanel
 from gui.plot_panel import PlotPanel
-from gui.solve_worker import SolveWorker, SolveDone
+from gui.solve_worker import SolveWorker, SolveDone, SolveLog
 from gui.project_io import save_project, load_project
 
-_DEBOUNCE_MS = 800
 _POLL_MS = 80
 
 
@@ -32,7 +32,6 @@ class App:
 
         self.model = DeviceModel()
         self.worker = SolveWorker()
-        self._debounce_after_id: Optional[str] = None
         self._current_project_path: Optional[str] = None
         self._active_request_id: Optional[int] = None
 
@@ -94,6 +93,7 @@ class App:
         solve_bar = ttk.Frame(middle_inner)
         solve_bar.pack(fill="x", pady=10, padx=4)
         ttk.Button(solve_bar, text="Solve Now", command=self._request_solve_now).pack(fill="x")
+        ttk.Button(solve_bar, text="Stop Simulation", command=self._stop_solve).pack(fill="x", pady=(4, 0))
 
         self.plot_panel = PlotPanel(right)
         self.plot_panel.pack(fill="both", expand=True)
@@ -104,51 +104,87 @@ class App:
 
     def _on_model_changed(self):
         self.stack_panel.refresh()
-        self._schedule_debounced_solve()
-
-    def _schedule_debounced_solve(self):
-        if self._debounce_after_id is not None:
-            self.root.after_cancel(self._debounce_after_id)
-        self._debounce_after_id = self.root.after(_DEBOUNCE_MS, self._request_solve_now)
+        # Solving only happens on an explicit "Solve Now" click (see
+        # _request_solve_now) -- editing the device just updates the model
+        # and flags that the on-screen plots are now stale, rather than
+        # re-solving automatically on every keystroke/edit.
+        if self.model.is_solvable():
+            self.plot_panel.set_status("Device changed — click \"Solve Now\" to update.")
 
     def _request_solve_now(self):
-        self._debounce_after_id = None
         if not self.model.is_solvable():
             self.plot_panel.set_status("Add at least one layer to solve.")
             return
+
+        # Field edits are debounced (~400ms) before landing in the model --
+        # flush anything still pending so a value just typed (e.g. Applied
+        # bias) is never silently solved-over with its pre-edit value.
+        self.settings_panel.flush_pending()
+        self.editor_panel.flush_pending()
 
         s = self.model.settings
         req = dict(
             layers=list(self.model.layers),
             contacts=list(self.model.contacts),
-            T=s.T, dx_nm=s.dx_nm, quantum=s.quantum,
+            T=s.T, dx_nm=s.dx_nm,
+            include_spontaneous_polarization=s.include_spontaneous_polarization,
+            quantum=s.quantum,
             n_states_e=s.n_states_e, n_states_h=s.n_states_h,
-            max_iter=s.max_iter, tol=s.tol, alpha=s.alpha, R_series=s.R_series,
+            max_iter=s.max_iter, tol=s.tol, alpha=s.alpha,
             sweep=s.sweep_mode, V_applied=s.V_applied,
             V_start=s.V_start, V_stop=s.V_stop, n_steps=s.n_steps,
         )
+        self.plot_panel.clear_log()
         self._active_request_id = self.worker.submit(req)
         self.plot_panel.set_status("Sweeping…" if s.sweep_mode else "Solving…")
 
+    def _stop_solve(self):
+        self.worker.stop()
+        self.plot_panel.set_status("Stopping…")
+
     def _poll_worker(self):
         for msg in self.worker.poll():
-            if isinstance(msg, SolveDone) and msg.request_id == self._active_request_id:
+            if msg.request_id != self._active_request_id:
+                continue
+            if isinstance(msg, SolveLog):
+                self.plot_panel.append_log(msg.text)
+            elif isinstance(msg, SolveDone):
                 self._handle_solve_done(msg)
         self.root.after(_POLL_MS, self._poll_worker)
 
+    def _project_base_name(self) -> str:
+        """Basename (no extension) of the currently open/saved project file,
+        used as the '<inputFileName>' prefix for solved-result CSVs -- falls
+        back to 'untitled' for a project that hasn't been saved yet."""
+        if not self._current_project_path:
+            return "untitled"
+        stem = os.path.splitext(os.path.basename(self._current_project_path))[0]
+        return stem or "untitled"
+
     def _handle_solve_done(self, msg: SolveDone):
+        if msg.cancelled:
+            self.plot_panel.set_status("Stopped by user.")
+            return
         if msg.error:
             self.plot_panel.set_status(f"Error: {msg.error}")
             return
+        project_name = self._project_base_name()
         if msg.results is not None:
-            self.plot_panel.show_sweep(msg.results, layers=self.model.layers)
+            self.plot_panel.show_sweep(msg.results, layers=self.model.layers,
+                                        project_name=project_name)
             n_conv = sum(r.converged for r in msg.results)
             self.plot_panel.set_status(f"Sweep done: {n_conv}/{len(msg.results)} points converged.")
         elif msg.result is not None:
-            self.plot_panel.show_result(msg.result, layers=self.model.layers)
+            self.plot_panel.show_result(msg.result, layers=self.model.layers,
+                                         project_name=project_name)
             r = msg.result
             status = "Converged" if r.converged else "Did not converge"
-            self.plot_panel.set_status(f"{status} in {r.n_iterations} iterations.")
+            v_note = f"V = {r.V_applied:.3f} V"
+            if abs(r.V_internal - r.V_applied) > 0.01:
+                v_note = (f"V_applied = {r.V_applied:.3f} V, "
+                          f"V_internal = {r.V_internal:.3f} V (R_series IR drop)")
+            self.plot_panel.set_status(
+                f"{status} in {r.n_iterations} iterations. ({v_note})")
 
     # ------------------------------------------------------------------
     def _new_project(self):

@@ -930,16 +930,54 @@ def solve_self_consistent(
         phi = np.zeros(g.N)
         
     # --- Quasi-Fermi levels ---
+    # 2026-09-27: default initial guess changed from a naive SHARED linear
+    # ramp (Efn = Efp = -V*x/L, identical for both carriers) to a
+    # physically-motivated, contact-localized shape: each quasi-Fermi
+    # level stays near its OWN contact's boundary value through most of
+    # the device, transitioning only near the OTHER (opposite-type)
+    # contact -- the standard textbook low-injection diode shape (Efn
+    # stays ~0 through the n-region AND deep into the p-region whenever
+    # the electron diffusion length exceeds the p-region's length, which
+    # is the common case; Efp mirrors this for holes in the n-region).
+    #
+    # This was not a cosmetic choice: the coupled Newton/Gummel system has
+    # multiple fixed points, and the OLD shared-linear-ramp guess reliably
+    # converged to a spurious-but-numerically-stable one where Efn stayed
+    # pinned equal to Efp everywhere (max|Efn-Efp| ~ 1e-4, near zero
+    # regardless of V_applied -- confirmed on every device tested, from a
+    # trivial 100nm/100nm GaN diode to the 45-layer UV-LED, at 1V through
+    # 10V) instead of the physically correct injected solution. Seeding
+    # from a guess already shaped like the correct textbook answer lands
+    # the solver in the right basin: confirmed empirically, the same
+    # simple diode at V=1V now converges to max|Efn-Efp| = 1.0000 (exactly
+    # V_applied) with this initial guess, versus ~0.0006 with the old one
+    # -- same equations, same solver, only the starting point changed.
+    # See project memory bug_efn_efp_not_splitting.md for the full
+    # investigation (this was on top of two other real, independently-
+    # confirmed bugs fixed the same day: a residual-scale masking floor
+    # in physics.coupled_solver, and a sign error in the hole continuity
+    # equation's recombination term).
+    _contact_transition_frac = 0.15  # fraction of device length near each
+    # contact over which that contact's OWN quasi-Fermi level relaxes
+    # toward the other boundary value -- not a physical device parameter,
+    # just how localized this initial-guess heuristic is; the solver
+    # refines from here, so this doesn't need to match any real diffusion
+    # length exactly.
+    _frac_x = g.x_nm / g.x_nm[-1]
     if Efn_init is not None:
         Efn = Efn_init.copy()
     else:
-        Efn = -linear_bias_drop.copy()
-        
+        Efn = -V_applied * np.clip(
+            (_frac_x - (1.0 - _contact_transition_frac)) / _contact_transition_frac,
+            0.0, 1.0)
+
     if Efp_init is not None:
         Efp = Efp_init.copy()
     else:
-        Efp = -linear_bias_drop.copy()
-        
+        Efp = -V_applied + V_applied * np.clip(
+            (_contact_transition_frac - _frac_x) / _contact_transition_frac,
+            0.0, 1.0)
+
     # Enforce contact boundary conditions immediately
     Efn[0] = 0.0
     Efn[-1] = -V_applied
@@ -1191,9 +1229,30 @@ def solve_self_consistent(
                     g.pol_rho, g.dx, phi_left, phi_right, T, dt=0.5
                 )
                 
-                # Decaying damping to prevent oscillations between classical DD and quantum Poisson
-                # This guarantees the limit cycle collapses to the fixed point
-                damping = max(0.01, 0.5 / iteration)
+                # Decaying damping to prevent oscillations between classical DD and quantum Poisson.
+                # No floor: a floored (non-vanishing) damping applies a
+                # permanent, non-zero perturbation to phi every single
+                # outer iteration forever, which structurally prevents the
+                # outer loop from ever reaching a tight tolerance -- it can
+                # only crawl asymptotically close, never actually arrive.
+                # Confirmed empirically (2026-09-27): with the old
+                # max(0.01, ...) floor, a quantum=True bias solve's outer
+                # |dphi|_max got stuck decaying by ~1%/iteration forever
+                # (e.g. 4.66e-5 at iteration 167, still only 3.51e-5 by
+                # iteration 195), never crossing tol=1e-6 even after
+                # hundreds of iterations, each one also wastefully
+                # re-attempting the Gummel fast path (which reliably
+                # diverges once this close to converged on this device)
+                # because the permanent perturbation kept the incoming
+                # state just far enough from the true fixed point for the
+                # cheap already-converged check in solve_coupled_dd to
+                # never trigger. Letting damping actually vanish (1/iteration,
+                # no floor) preserves the original intent (heavy damping
+                # early, to prevent oscillation) while letting it actually
+                # go to zero for large iteration counts, so the fixed
+                # point is a true fixed point, not an eternally-perturbed
+                # near-miss.
+                damping = 0.5 / iteration
                 phi_candidate = phi + damping * (phi_q - phi)
 
             # Reuses alpha_history's slot to record the NK iteration count

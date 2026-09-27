@@ -237,8 +237,20 @@ def solve_continuity_hole(
     diag_upper[1:] = coeff_r * B_pos[1:]
     diag_lower[:-1] = coeff_l * B_neg[:-1]
 
-    rhs[1:-1] = R_total[1:-1]
-    
+    # 2026-09-27: fixed sign -- the derivation just above concludes
+    # coeff*[bracket] = -R_i (matching the module's own dJ_p/dx = -q*R
+    # docstring and the standard textbook result that hole continuity has
+    # the OPPOSITE sign to electron continuity's dJ_n/dx = +q*R, since a
+    # recombination event is a sink for both carriers but Jn/Jp are
+    # defined with opposite conventional-current sign conventions), but
+    # this line set rhs = +R_total, contradicting its own derivation.
+    # Invisible at equilibrium (R=0 identically when np=ni^2), so it only
+    # corrupted every biased solve: confirmed empirically as the root
+    # cause of near-zero Efn-Efp splitting under forward bias on every
+    # device tested (a plain GaN diode and the 45-layer UV-LED alike, at
+    # 1V through 10V) -- see project memory bug_efn_efp_not_splitting.md.
+    rhs[1:-1] = -R_total[1:-1]
+
     # Dirichlet BCs
     diag_main[0] = 1.0
     rhs[0] = p_left

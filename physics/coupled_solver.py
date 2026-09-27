@@ -388,7 +388,27 @@ def _make_residual_fn(
         # Self-referential scale: this carrier's own current trial-state
         # density, not a fixed doping-based reference -- see the comment
         # above n_of/p_of's caller (where poisson_scale is built) for why.
-        n_flux_scale = np.maximum(1.0, coeff_r_n * np.maximum(n[1:-1], 1e10) * 1e6)
+        #
+        # 2026-09-27: floor lowered from 1e10 to _MIN_CARRIER_DENSITY_CM3
+        # (1.0) after finding this masked minority-carrier injection
+        # entirely, on EVERY device tested (not just hard MQW ones) --
+        # confirmed on a plain 100nm/100nm 1e18/1e18 GaN p-n diode at 1V
+        # forward bias: minority hole density at the junction edge should
+        # increase by ~exp(qV/kT) ~ 1e17x (law of the junction) but came
+        # out essentially unchanged (ratio ~0.999) because wherever the
+        # true n dropped below the old 1e10 floor -- which is most of the
+        # opposite-doping-type region, i.e. exactly where injection
+        # physics lives -- the flux_scale saturated at that floor
+        # regardless of n's real (much smaller) value. That made a raw,
+        # wildly-unsatisfied continuity residual (e.g. +1.25e5 at the
+        # junction) normalize down to ~1e-26 and read as "converged" well
+        # inside tol=1e-3, while the true minority-carrier profile was
+        # frozen at its equilibrium shape. Exactly the same masking
+        # mechanism as [[bug-quasi-fermi-pinning]] (a scale disconnected
+        # from the true local magnitude hides a real error), just
+        # resurfacing via a hardcoded floor instead of a doping-based
+        # scale. See project memory bug_efn_efp_not_splitting.md.
+        n_flux_scale = np.maximum(1.0, coeff_r_n * np.maximum(n[1:-1], _MIN_CARRIER_DENSITY_CM3) * 1e6)
         F2 = np.empty(N)
         F2[1:-1] = F2_interior / n_flux_scale
         F2[0] = Efn[0] - Efn_left
@@ -400,8 +420,18 @@ def _make_residual_fn(
         right_p = Bpos_p[1:] * (p[2:] - p[1:-1]) - p[1:-1] * dpsi_p_r
         left_p = Bpos_p[:-1] * (p[1:-1] - p[:-2]) - p[:-2] * dpsi_p_l
         Jdiv_p = coeff_r_p * right_p - coeff_l_p * left_p
-        F3_interior = Jdiv_p - R[1:-1]
-        p_flux_scale = np.maximum(1.0, coeff_r_p * np.maximum(p[1:-1], 1e10) * 1e6)
+        # 2026-09-27: sign fixed -- hole continuity is dJ_p/dx = -q*R
+        # (opposite sign from electron continuity's dJ_n/dx = +q*R; see
+        # physics.drift_diffusion.solve_continuity_hole's matching fix and
+        # its comment for the full derivation/rationale). Jdiv_p here is
+        # built with the identical algebraic structure as Jdiv_n just
+        # above (same Bernoulli-identity stencil, n->p/mu_n->mu_p/
+        # psi_n_eff->psi_p_eff), so it's the same "flux divergence"
+        # quantity and needs the same sign flip relative to electrons'
+        # F2_interior = Jdiv_n - R.
+        F3_interior = Jdiv_p + R[1:-1]
+        # See n_flux_scale's comment above -- same 2026-09-27 floor fix.
+        p_flux_scale = np.maximum(1.0, coeff_r_p * np.maximum(p[1:-1], _MIN_CARRIER_DENSITY_CM3) * 1e6)
         F3 = np.empty(N)
         F3[1:-1] = F3_interior / p_flux_scale
         F3[0] = Efp[0] - Efp_left
@@ -854,6 +884,32 @@ def solve_coupled_dd(
         surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
         quantum_gamma_n, quantum_gamma_p,
     )
+
+    # Cheap already-converged check: the outer Gummel loop in physics.
+    # self_consistent calls this function again every outer iteration,
+    # re-passing whatever (phi, Efn, Efp) the *previous* iteration already
+    # converged to. Without this check, that incoming already-good state
+    # still had to survive a full, expensive Gummel attempt (up to
+    # _GUMMEL_MAXITER=200 iterations) before falling through to the
+    # monolithic solver's own cheap initial-residual check -- confirmed
+    # empirically: a state that had already converged burned 200 wasted
+    # Gummel iterations on the very next outer call purely because Gummel
+    # doesn't know to check this first. One residual_fn evaluation here
+    # (cheap: no linear solve) avoids that entirely.
+    state0_check = np.concatenate([phi0, Efn0, Efp0])
+    F0 = residual_fn(state0_check)
+    if np.all(np.isfinite(F0)):
+        res0 = float(np.max(np.abs(F0)))
+        if res0 < tol:
+            if log_fn is not None:
+                log_fn(f"    Already converged (|F|_max={res0:.3e} < tol={tol:.3e}) "
+                       f"-- skipping both Gummel and monolithic solves.")
+            phi = phi0.copy(); Efn = Efn0.copy(); Efp = Efp0.copy()
+            phi[0], phi[-1] = phi_left, phi_right
+            Efn[0], Efn[-1] = Efn_left, Efn_right
+            Efp[0], Efp[-1] = Efp_left, Efp_right
+            return CoupledResult(phi=phi, Efn=Efn, Efp=Efp, converged=True,
+                                  n_iter=0, final_residual=res0)
 
     # Fast path: nextnano++-style decoupled Gummel with adaptive relaxation
     # (see _solve_gummel_adaptive) -- roughly 10-100x cheaper per iteration

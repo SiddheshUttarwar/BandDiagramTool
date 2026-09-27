@@ -199,6 +199,75 @@ def solve_poisson_newton(
     return spsolve(A, rhs)
 
 
+def solve_poisson_newton_ptc(
+    phi: np.ndarray,
+    eps_r: np.ndarray,
+    n_cm3: np.ndarray,
+    p_cm3: np.ndarray,
+    ND: np.ndarray,
+    NA: np.ndarray,
+    dNd_dphi_cm3: np.ndarray,
+    dNa_dphi_cm3: np.ndarray,
+    pol_rho: np.ndarray,
+    dx,
+    phi_left: float,
+    phi_right: float,
+    T: float,
+    dt: float,
+) -> np.ndarray:
+    """
+    Same linearisation as solve_poisson_newton, with a pseudo-transient
+    continuation (PTC) damping term folded directly into the Jacobian's
+    diagonal instead of relying on the caller to damp/mix the *result*
+    afterward (see physics.coupled_solver._solve_ptc_direct for the same
+    technique applied to the fully-coupled bias system -- this is its
+    single-equation equivalent for the equilibrium Poisson solve).
+
+    Deriving the augmented system from the Newton step it must reduce to:
+    solve_poisson_newton solves J*phi_new = J*phi - F(phi) where
+    J = A_pos + D and F(phi) = A_pos@phi - rho/eps0 is the true nonlinear
+    residual (i.e. phi_new - phi is the plain Newton step, J^-1 @ (-F)).
+    PTC instead solves (J + I/dt)*delta = -F(phi), which works out to:
+        (A_pos + D + I/dt) * phi_new = D*phi + phi/dt + rho/eps0
+    i.e. exactly solve_poisson_newton's own assembled system with 1/dt
+    added to the interior diagonal and phi/dt added to the interior RHS --
+    dt -> infinity recovers the plain (undamped) Newton step exactly, and
+    small dt heavily damps it, precisely like implicit time-stepping.
+    """
+    N = len(phi)
+    kBT_V = kB * T / _q
+
+    n_m3  = np.asarray(n_cm3) * 1e6
+    p_m3  = np.asarray(p_cm3) * 1e6
+    ND_m3 = np.asarray(ND) * 1e6
+    NA_m3 = np.asarray(NA) * 1e6
+
+    rho = _q * (p_m3 - n_m3 + ND_m3 - NA_m3) + pol_rho
+
+    eps_m, eps_p, h1, h2, cell_width = _assemble_laplacian(eps_r, dx)
+    cw = cell_width[1:-1]
+
+    dNd_m3 = np.asarray(dNd_dphi_cm3) * 1e6
+    dNa_m3 = np.asarray(dNa_dphi_cm3) * 1e6
+    D_int = _q * (n_m3[1:-1] / kBT_V + p_m3[1:-1] / kBT_V - dNd_m3[1:-1] + dNa_m3[1:-1]) / eps0
+
+    diag_main  = np.zeros(N)
+    diag_lower = np.zeros(N - 1)
+    diag_upper = np.zeros(N - 1)
+    rhs        = np.zeros(N)
+
+    diag_main[1:-1]  = (eps_m / h1 + eps_p / h2) / cw + D_int + 1.0 / dt
+    diag_lower[:-1]  = -(eps_m / h1) / cw
+    diag_upper[1:]   = -(eps_p / h2) / cw
+    rhs[1:-1]        = D_int * phi[1:-1] + phi[1:-1] / dt + rho[1:-1] / eps0
+
+    diag_main[0]  = 1.0;  rhs[0]  = phi_left
+    diag_main[-1] = 1.0;  rhs[-1] = phi_right
+
+    A = diags([diag_lower, diag_main, diag_upper], [-1, 0, 1], format='csr')
+    return spsolve(A, rhs)
+
+
 def electric_field(phi: np.ndarray, dx) -> np.ndarray:
     """
     Compute electric field E = -dphi/dx [V/m].

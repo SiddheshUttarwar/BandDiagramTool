@@ -13,34 +13,34 @@ switch), a manual toolbar zoom gets wiped out immediately. The "Zoom"
 control here fixes that generically for every tab: it stores the selected
 layer's (xmin, xmax) and re-applies it *after* calling the panel function,
 so it survives redraws until the user changes it back to "Full device".
+
+Each solved result is still written to results/ as CSV (useful as a
+standalone artifact), but plotting reads directly from the in-memory
+SolverResult rather than reloading and re-parsing that CSV -- round-tripping
+every point through disk before it could be drawn was the single biggest
+contributor to the sluggish feel of solving/scrubbing a sweep.
 """
 
 from __future__ import annotations
 
 import os
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from tkinter.scrolledtext import ScrolledText
 from typing import List, Optional, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from physics.self_consistent import SolverResult
 from visualization.plotter import (
     plot_band_diagram, plot_wavefunctions, plot_carriers,
     plot_fields, plot_polarization, plot_strain, plot_qcse,
 )
-from visualization.csv_export import save_and_reload_csv, result_filename
+from visualization.csv_export import save_result_csv, result_filename
 from gui.layer_stack import _layer_summary
+from gui import theme
 
-# Every solve's per-grid-point profiles are written here as CSV, then read
-# back before plotting -- see visualization.csv_export.save_and_reload_csv.
-# Each file is named '<project>_Bias_<V>V_Temp_<T>K.csv' (see
-# visualization.csv_export.result_filename); a sweep writes one file per
-# voltage step, so re-running a solve at the same bias/temperature
-# overwrites that step's file rather than accumulating stale ones.
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
 _DEFAULT_PROJECT_NAME = "untitled"
 
@@ -84,9 +84,9 @@ _Y_FIELDS = {
 }
 
 
-class PlotPanel(ttk.Frame):
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, **kwargs)
+class PlotPanel(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.results: List[SolverResult] = []
         self.current_index = 0
         self._layer_ranges: List[Tuple[str, float, float]] = []  # (label, xmin, xmax)
@@ -98,97 +98,119 @@ class PlotPanel(ttk.Frame):
         # so it never fights a zoom choice the user made themselves.
         self._auto_zoom_applied = False
 
-        self._status_var = tk.StringVar(value="No solve yet.")
-        status_bar = ttk.Frame(self)
-        status_bar.pack(fill="x", side="bottom", padx=6, pady=4)
-        ttk.Label(status_bar, textvariable=self._status_var).pack(side="left")
-        ttk.Button(status_bar, text="Export PNG…", command=self._export_png).pack(side="right")
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(2, 2, 2, 2)
+        root.setSpacing(8)
 
-        # --- Solver log: streams physics.self_consistent's verbose=True
-        # per-iteration output live while a solve runs in the background
-        # (see gui.solve_worker's stdout-redirect capture). ---
-        log_controls = ttk.Frame(self)
-        log_controls.pack(fill="x", side="bottom", padx=6)
-        self._log_visible = tk.BooleanVar(value=True)
-        ttk.Checkbutton(log_controls, text="Show solver log", variable=self._log_visible,
-                         command=self._toggle_log).pack(side="left")
-        ttk.Button(log_controls, text="Clear log", command=self.clear_log).pack(side="left", padx=6)
+        zoom_row = QtWidgets.QHBoxLayout()
+        zoom_row.addWidget(QtWidgets.QLabel("Zoom:"))
+        self._zoom_combo = QtWidgets.QComboBox()
+        self._zoom_combo.addItem(_FULL_DEVICE)
+        self._zoom_combo.setMinimumWidth(360)
+        self._zoom_combo.currentIndexChanged.connect(lambda _i: self._redraw_current())
+        zoom_row.addWidget(self._zoom_combo)
+        hint = QtWidgets.QLabel("(pick a layer to see thin regions like a quantum well clearly)")
+        hint.setStyleSheet(f"color: {theme.TEXT_FAINT};")
+        zoom_row.addWidget(hint)
+        zoom_row.addStretch(1)
+        root.addLayout(zoom_row)
 
-        self._log_frame = ttk.LabelFrame(self, text="Solver Log")
-        self._log_text = ScrolledText(self._log_frame, height=8, state="disabled",
-                                       wrap="none", font=("Consolas", 9))
-        self._log_text.pack(fill="both", expand=True, padx=4, pady=4)
-        self._log_frame.pack(fill="x", side="bottom", padx=6, pady=(0, 4))
+        self._slider_widget = QtWidgets.QWidget()
+        slider_row = QtWidgets.QHBoxLayout(self._slider_widget)
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        self._slider_label = QtWidgets.QLabel("")
+        self._slider_label.setMinimumWidth(280)
+        slider_row.addWidget(self._slider_label)
+        self._slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._slider.setMinimum(0)
+        self._slider.setMaximum(0)
+        self._slider.valueChanged.connect(self._on_slider)
+        slider_row.addWidget(self._slider, 1)
+        root.addWidget(self._slider_widget)
+        self._slider_widget.setVisible(False)
 
-        zoom_frame = ttk.Frame(self)
-        zoom_frame.pack(fill="x", padx=6, pady=(4, 0))
-        ttk.Label(zoom_frame, text="Zoom:").pack(side="left")
-        self._zoom_var = tk.StringVar(value=_FULL_DEVICE)
-        self._zoom_combo = ttk.Combobox(zoom_frame, textvariable=self._zoom_var,
-                                         state="readonly", values=[_FULL_DEVICE], width=48)
-        self._zoom_combo.pack(side="left", padx=6)
-        self._zoom_combo.bind("<<ComboboxSelected>>", lambda e: self._redraw_current())
-        ttk.Label(zoom_frame, text="(pick a layer to see thin regions like a quantum well clearly)",
-                  foreground="#888888").pack(side="left", padx=6)
-
-        self._slider_frame = ttk.Frame(self)
-        self._slider_label = ttk.Label(self._slider_frame, text="", width=40)
-        self._slider_label.pack(side="left", padx=(6, 4))
-        self._slider = ttk.Scale(self._slider_frame, from_=0, to=0, orient="horizontal",
-                                  command=self._on_slider)
-        self._slider.pack(side="left", fill="x", expand=True, padx=6, pady=4)
-
-        self._notebook = ttk.Notebook(self)
-        self._notebook.pack(fill="both", expand=True)
+        self._notebook = QtWidgets.QTabWidget()
+        self._notebook.currentChanged.connect(lambda _i: self._redraw_current())
+        root.addWidget(self._notebook, 1)
 
         self._tabs = {}
         for name, fn in _PANELS:
-            tab = ttk.Frame(self._notebook)
-            self._notebook.add(tab, text=name)
+            tab = QtWidgets.QWidget()
+            tab_layout = QtWidgets.QVBoxLayout(tab)
+            tab_layout.setContentsMargins(0, 0, 0, 0)
             fig = plt.Figure(figsize=(8, 5.5), dpi=100)
             ax = fig.add_subplot(111)
-            canvas = FigureCanvasTkAgg(fig, master=tab)
-            toolbar = NavigationToolbar2Tk(canvas, tab, pack_toolbar=False)
-            toolbar.update()
-            toolbar.pack(side="bottom", fill="x")
-            canvas.get_tk_widget().pack(fill="both", expand=True)
+            canvas = FigureCanvasQTAgg(fig)
+            toolbar = NavigationToolbar2QT(canvas, tab)
+            toolbar.setObjectName("mplToolbar")
+            toolbar.setIconSize(QtCore.QSize(20, 20))
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas, 1)
+            self._notebook.addTab(tab, name)
             self._tabs[name] = (fig, ax, canvas, fn)
 
-        self._notebook.bind("<<NotebookTabChanged>>", lambda e: self._redraw_current())
+        # --- Solver log: streams physics.self_consistent's verbose=True
+        # per-iteration output live while a solve runs in the background
+        # (see gui.solve_worker's log_fn callback). ---
+        log_controls = QtWidgets.QHBoxLayout()
+        self._log_visible = QtWidgets.QCheckBox("Show solver log")
+        self._log_visible.setChecked(True)
+        self._log_visible.toggled.connect(self._toggle_log)
+        log_controls.addWidget(self._log_visible)
+        clear_btn = QtWidgets.QPushButton("Clear log")
+        clear_btn.clicked.connect(self.clear_log)
+        log_controls.addWidget(clear_btn)
+        log_controls.addStretch(1)
+        root.addLayout(log_controls)
+
+        self._log_group = QtWidgets.QGroupBox("Solver Log")
+        log_layout = QtWidgets.QVBoxLayout(self._log_group)
+        self._log_text = QtWidgets.QPlainTextEdit()
+        self._log_text.setReadOnly(True)
+        self._log_text.setMaximumBlockCount(5000)
+        self._log_text.setFixedHeight(140)
+        self._log_text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        font = QtGui.QFont("Consolas", 9)
+        self._log_text.setFont(font)
+        log_layout.addWidget(self._log_text)
+        root.addWidget(self._log_group)
+
+        status_row = QtWidgets.QHBoxLayout()
+        self._status_label = QtWidgets.QLabel("No solve yet.")
+        status_row.addWidget(self._status_label)
+        status_row.addStretch(1)
+        export_btn = QtWidgets.QPushButton("Export PNG…")
+        export_btn.clicked.connect(self._export_png)
+        status_row.addWidget(export_btn)
+        root.addLayout(status_row)
 
     # ------------------------------------------------------------------
     def set_status(self, text: str):
-        self._status_var.set(text)
+        self._status_label.setText(text)
 
     def append_log(self, text: str) -> None:
-        self._log_text.configure(state="normal")
-        self._log_text.insert("end", text + "\n")
-        self._log_text.see("end")
-        self._log_text.configure(state="disabled")
+        self._log_text.appendPlainText(text)
 
     def clear_log(self) -> None:
-        self._log_text.configure(state="normal")
-        self._log_text.delete("1.0", "end")
-        self._log_text.configure(state="disabled")
+        self._log_text.clear()
 
     def _toggle_log(self) -> None:
-        if self._log_visible.get():
-            self._log_frame.pack(fill="x", side="bottom", padx=6, pady=(0, 4))
-        else:
-            self._log_frame.pack_forget()
+        self._log_group.setVisible(self._log_visible.isChecked())
 
-    def _csv_roundtrip(self, result: SolverResult, project_name: str) -> SolverResult:
+    def _write_csv(self, result: SolverResult, project_name: str) -> None:
+        """Fire-and-forget CSV export -- a convenience artifact for the user,
+        not something the plots themselves depend on (see module docstring)."""
         os.makedirs(_RESULTS_DIR, exist_ok=True)
         stem = result_filename(project_name, result.V_applied, result.T)
         path = os.path.join(_RESULTS_DIR, f"{stem}.csv")
-        return save_and_reload_csv(result, path)
+        save_result_csv(result, path)
 
     def show_result(self, result: SolverResult, layers: Optional[list] = None,
                      project_name: str = _DEFAULT_PROJECT_NAME):
-        result = self._csv_roundtrip(result, project_name)
+        self._write_csv(result, project_name)
         self.results = [result]
         self.current_index = 0
-        self._slider_frame.pack_forget()
+        self._slider_widget.setVisible(False)
         self._update_zoom_choices(layers, qw_range_nm=result.qw_window_nm)
         self._redraw_current()
 
@@ -196,12 +218,16 @@ class PlotPanel(ttk.Frame):
                     project_name: str = _DEFAULT_PROJECT_NAME):
         if not results:
             return
-        results = [self._csv_roundtrip(r, project_name) for r in results]
+        for r in results:
+            self._write_csv(r, project_name)
         self.results = results
         self.current_index = len(results) - 1
-        self._slider.configure(from_=0, to=max(0, len(results) - 1))
-        self._slider.set(self.current_index)
-        self._slider_frame.pack(fill="x", before=self._notebook)
+        self._slider.blockSignals(True)
+        self._slider.setMinimum(0)
+        self._slider.setMaximum(max(0, len(results) - 1))
+        self._slider.setValue(self.current_index)
+        self._slider.blockSignals(False)
+        self._slider_widget.setVisible(True)
         self._update_slider_label()
         self._update_zoom_choices(layers, qw_range_nm=results[self.current_index].qw_window_nm)
         self._redraw_current()
@@ -218,7 +244,7 @@ class PlotPanel(ttk.Frame):
         invisible sliver against the full x-axis and easy to miss entirely.
         Never overrides a zoom choice the user has already made.
         """
-        previous = self._zoom_var.get()
+        previous = self._zoom_combo.currentText()
         self._layer_ranges = []
         if layers:
             start = 0.0
@@ -233,7 +259,9 @@ class PlotPanel(ttk.Frame):
                 start = end
 
         values = [_FULL_DEVICE] + [label for label, _, _ in self._layer_ranges]
-        self._zoom_combo.configure(values=values)
+        self._zoom_combo.blockSignals(True)
+        self._zoom_combo.clear()
+        self._zoom_combo.addItems(values)
 
         if not self._auto_zoom_applied and qw_range_nm is not None and self._layer_ranges:
             qw_lo, qw_hi = qw_range_nm
@@ -241,14 +269,16 @@ class PlotPanel(ttk.Frame):
                 self._layer_ranges,
                 key=lambda item: abs(item[1] - qw_lo) + abs(item[2] - qw_hi),
             )
-            self._zoom_var.set(match[0])
+            self._zoom_combo.setCurrentText(match[0])
             self._auto_zoom_applied = True
+            self._zoom_combo.blockSignals(False)
             return
 
-        self._zoom_var.set(previous if previous in values else _FULL_DEVICE)
+        self._zoom_combo.setCurrentText(previous if previous in values else _FULL_DEVICE)
+        self._zoom_combo.blockSignals(False)
 
-    def _on_slider(self, value):
-        idx = int(round(float(value)))
+    def _on_slider(self, value: int):
+        idx = int(value)
         if idx == self.current_index:
             return
         self.current_index = idx
@@ -260,8 +290,8 @@ class PlotPanel(ttk.Frame):
             return
         r = self.results[self.current_index]
         conv = "converged" if r.converged else "NOT converged"
-        self._slider_label.configure(
-            text=f"V = {r.V_applied:.3f} V  ({self.current_index + 1}/{len(self.results)}, {conv})")
+        self._slider_label.setText(
+            f"V = {r.V_applied:.3f} V  ({self.current_index + 1}/{len(self.results)}, {conv})")
 
     def _redraw_current(self):
         if not self.results:
@@ -296,7 +326,7 @@ class PlotPanel(ttk.Frame):
         for t in ax.texts:
             t.set_clip_on(True)
 
-        choice = self._zoom_var.get()
+        choice = self._zoom_combo.currentText()
         if choice == _FULL_DEVICE:
             return
         match = next(((xmin, xmax) for label, xmin, xmax in self._layer_ranges
@@ -349,24 +379,24 @@ class PlotPanel(ttk.Frame):
         return lo, hi
 
     def _current_tab_name(self) -> Optional[str]:
-        try:
-            idx = self._notebook.index(self._notebook.select())
-        except tk.TclError:
+        idx = self._notebook.currentIndex()
+        if idx < 0:
             return None
         return _PANELS[idx][0]
 
     def _export_png(self):
         if not self.results:
-            messagebox.showinfo("Export PNG", "Nothing to export yet — run a solve first.")
+            QtWidgets.QMessageBox.information(self, "Export PNG",
+                                                "Nothing to export yet — run a solve first.")
             return
         name = self._current_tab_name()
         if name is None:
             return
         fig, *_ = self._tabs[name]
-        path = filedialog.asksaveasfilename(
-            defaultextension=".png", filetypes=[("PNG image", "*.png")],
-            initialfile=f"{name.lower().replace(' ', '_')}.png")
+        default_name = f"{name.lower().replace(' ', '_')}.png"
+        path, _filter = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export PNG", default_name, "PNG image (*.png)")
         if not path:
             return
         fig.savefig(path, dpi=150, bbox_inches="tight")
-        messagebox.showinfo("Export PNG", f"Saved to {path}")
+        QtWidgets.QMessageBox.information(self, "Export PNG", f"Saved to {path}")

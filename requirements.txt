@@ -2,4 +2,5 @@ numpy>=1.24
 scipy>=1.10
 matplotlib>=3.7
 scienceplots>=2.0
+PyQt6>=6.6
 pytest>=7

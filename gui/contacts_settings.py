@@ -10,108 +10,140 @@ to edits, so typing/selecting is never interrupted.
 
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk
+from PyQt6 import QtCore, QtWidgets
 
 from devices.layer import Contact
 from physics.materials.metals import METAL_WORK_FUNCTIONS
 from gui.models import DeviceModel
 
 _METALS = sorted(METAL_WORK_FUNCTIONS.keys())
-
-
-class ContactsPanel(ttk.LabelFrame):
-    def __init__(self, parent, model: DeviceModel, **kwargs):
-        super().__init__(parent, text="Contacts", **kwargs)
-        self.model = model
-        self._build_row("Bottom", model.bottom_contact, model.set_bottom_contact)
-        self._build_row("Top", model.top_contact, model.set_top_contact)
-
-    def _build_row(self, label, contact: Contact, setter):
-        row = ttk.Frame(self)
-        row.pack(fill="x", padx=8, pady=6)
-        ttk.Label(row, text=label, width=8).pack(side="left")
-
-        type_var = tk.StringVar(value=contact.contact_type)
-        metal_var = tk.StringVar(value=contact.metal)
-
-        def apply(*_):
-            setter(Contact(position=contact.position, contact_type=type_var.get(),
-                            metal=metal_var.get()))
-
-        type_combo = ttk.Combobox(row, textvariable=type_var, state="readonly",
-                                   values=["ohmic", "schottky"], width=10)
-        type_combo.pack(side="left", padx=4)
-        type_combo.bind("<<ComboboxSelected>>", apply)
-
-        metal_combo = ttk.Combobox(row, textvariable=metal_var, state="readonly",
-                                    values=_METALS, width=6)
-        metal_combo.pack(side="left", padx=4)
-        metal_combo.bind("<<ComboboxSelected>>", apply)
-
-
 _APPLY_DEBOUNCE_MS = 400
 
 
-class SettingsPanel(ttk.LabelFrame):
-    def __init__(self, parent, model: DeviceModel, **kwargs):
-        super().__init__(parent, text="Settings", **kwargs)
+class ContactsPanel(QtWidgets.QGroupBox):
+    def __init__(self, model: DeviceModel, parent=None):
+        super().__init__("Contacts", parent)
         self.model = model
-        self._apply_after_ids: dict = {}
-        self._field_vars: dict = {}   # attr -> (StringVar, cast) for flush_pending
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(self._build_row("Bottom", model.bottom_contact, model.set_bottom_contact))
+        layout.addLayout(self._build_row("Top", model.top_contact, model.set_top_contact))
+
+    def _build_row(self, label, contact: Contact, setter):
+        row = QtWidgets.QHBoxLayout()
+        lbl = QtWidgets.QLabel(label)
+        lbl.setMinimumWidth(50)
+        row.addWidget(lbl)
+
+        type_combo = QtWidgets.QComboBox()
+        type_combo.addItems(["ohmic", "schottky"])
+        type_combo.setCurrentText(contact.contact_type)
+
+        metal_combo = QtWidgets.QComboBox()
+        metal_combo.addItems(_METALS)
+        metal_combo.setCurrentText(contact.metal)
+
+        def apply(_=None):
+            setter(Contact(position=contact.position, contact_type=type_combo.currentText(),
+                            metal=metal_combo.currentText()))
+
+        type_combo.currentTextChanged.connect(apply)
+        metal_combo.currentTextChanged.connect(apply)
+
+        row.addWidget(type_combo)
+        row.addWidget(metal_combo)
+        row.addStretch(1)
+        return row
+
+
+class SettingsPanel(QtWidgets.QGroupBox):
+    def __init__(self, model: DeviceModel, parent=None):
+        super().__init__("Settings", parent)
+        self.model = model
+        self._apply_timers: dict = {}
+        self._field_vars: dict = {}   # attr -> (QLineEdit, cast) for flush_pending
         s = model.settings
 
-        self._row_entry(self, "Temperature (K)", "T", s.T)
-        self._row_entry(self, "Grid spacing (nm)", "dx_nm", s.dx_nm)
+        layout = QtWidgets.QVBoxLayout(self)
 
-        quantum_var = tk.BooleanVar(value=s.quantum)
-        ttk.Checkbutton(self, text="Quantum (Schrödinger-Poisson)",
-                         variable=quantum_var,
-                         command=lambda: self._set("quantum", quantum_var.get())
-                         ).pack(anchor="w", padx=8, pady=(6, 2))
+        layout.addLayout(self._row_entry("Temperature (K)", "T", s.T))
+        layout.addLayout(self._row_entry("Grid spacing (nm)", "dx_nm", s.dx_nm))
 
-        psp_var = tk.BooleanVar(value=s.include_spontaneous_polarization)
-        ttk.Checkbutton(self, text="Add spontaneous polarization in band diagram calculations",
-                         variable=psp_var,
-                         command=lambda: self._set("include_spontaneous_polarization", psp_var.get())
-                         ).pack(anchor="w", padx=8, pady=(0, 2))
+        quantum_cb = QtWidgets.QCheckBox("Quantum (Schrödinger-Poisson)")
+        quantum_cb.setChecked(s.quantum)
+        quantum_cb.toggled.connect(lambda v: self._set("quantum", v))
+        layout.addWidget(quantum_cb)
 
-        ttk.Separator(self).pack(fill="x", padx=8, pady=6)
+        psp_cb = QtWidgets.QCheckBox("Add spontaneous polarization in band diagram calculations")
+        psp_cb.setChecked(s.include_spontaneous_polarization)
+        psp_cb.toggled.connect(lambda v: self._set("include_spontaneous_polarization", v))
+        layout.addWidget(psp_cb)
 
-        self.sweep_var = tk.BooleanVar(value=s.sweep_mode)
-        ttk.Checkbutton(self, text="Voltage sweep mode", variable=self.sweep_var,
-                         command=self._toggle_sweep).pack(anchor="w", padx=8)
+        layout.addWidget(self._separator())
 
-        self._single_frame = ttk.Frame(self)
-        self._sweep_frame = ttk.Frame(self)
-        self._row_entry(self._single_frame, "Applied bias (V)", "V_applied", s.V_applied)
-        self._row_entry(self._sweep_frame, "V start", "V_start", s.V_start)
-        self._row_entry(self._sweep_frame, "V stop", "V_stop", s.V_stop)
-        self._row_entry(self._sweep_frame, "Steps", "n_steps", s.n_steps, cast=int)
-        self._toggle_sweep()
+        # --- Bias controls (sweep toggle + single/sweep fields) ---
+        self._classical_widget = QtWidgets.QWidget()
+        classical_layout = QtWidgets.QVBoxLayout(self._classical_widget)
+        classical_layout.setContentsMargins(0, 0, 0, 0)
 
-        ttk.Separator(self).pack(fill="x", padx=8, pady=6)
-        self._adv_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self, text="Advanced solver settings", variable=self._adv_var,
-                         command=self._toggle_advanced).pack(anchor="w", padx=8)
-        self._adv_frame = ttk.Frame(self)
-        self._row_entry(self._adv_frame, "Max iterations", "max_iter", s.max_iter, cast=int)
-        self._row_entry(self._adv_frame, "Tolerance (V)", "tol", s.tol)
-        self._row_entry(self._adv_frame, "Damping alpha", "alpha", s.alpha)
-        self._row_entry(self._adv_frame, "Electron subbands", "n_states_e", s.n_states_e, cast=int)
-        self._row_entry(self._adv_frame, "Hole subbands", "n_states_h", s.n_states_h, cast=int)
+        self.sweep_cb = QtWidgets.QCheckBox("Voltage sweep mode")
+        self.sweep_cb.setChecked(s.sweep_mode)
+        self.sweep_cb.toggled.connect(self._toggle_sweep)
+        classical_layout.addWidget(self.sweep_cb)
+
+        self._single_widget = QtWidgets.QWidget()
+        single_layout = QtWidgets.QVBoxLayout(self._single_widget)
+        single_layout.setContentsMargins(0, 0, 0, 0)
+        single_layout.addLayout(self._row_entry("Applied bias (V)", "V_applied", s.V_applied))
+        classical_layout.addWidget(self._single_widget)
+
+        self._sweep_widget = QtWidgets.QWidget()
+        sweep_layout = QtWidgets.QVBoxLayout(self._sweep_widget)
+        sweep_layout.setContentsMargins(0, 0, 0, 0)
+        sweep_layout.addLayout(self._row_entry("V start", "V_start", s.V_start))
+        sweep_layout.addLayout(self._row_entry("V stop", "V_stop", s.V_stop))
+        sweep_layout.addLayout(self._row_entry("Steps", "n_steps", s.n_steps, cast=int))
+        classical_layout.addWidget(self._sweep_widget)
+        self._toggle_sweep(s.sweep_mode)
+
+        layout.addWidget(self._classical_widget)
+
+        layout.addWidget(self._separator())
+        self._adv_cb = QtWidgets.QCheckBox("Advanced solver settings")
+        self._adv_cb.setChecked(False)
+        self._adv_cb.toggled.connect(self._toggle_advanced)
+        layout.addWidget(self._adv_cb)
+
+        self._adv_widget = QtWidgets.QWidget()
+        adv_layout = QtWidgets.QVBoxLayout(self._adv_widget)
+        adv_layout.setContentsMargins(0, 0, 0, 0)
+        adv_layout.addLayout(self._row_entry("Max iterations", "max_iter", s.max_iter, cast=int))
+        adv_layout.addLayout(self._row_entry("Tolerance (V)", "tol", s.tol))
+        adv_layout.addLayout(self._row_entry("Damping alpha", "alpha", s.alpha))
+        adv_layout.addLayout(self._row_entry("Electron subbands", "n_states_e", s.n_states_e, cast=int))
+        adv_layout.addLayout(self._row_entry("Hole subbands", "n_states_h", s.n_states_h, cast=int))
+        layout.addWidget(self._adv_widget)
+        self._adv_widget.setVisible(False)
+
+    @staticmethod
+    def _separator() -> QtWidgets.QFrame:
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+        return line
 
     # ------------------------------------------------------------------
-    def _row_entry(self, parent, label, attr, initial, cast=float):
-        row = ttk.Frame(parent)
-        row.pack(fill="x", padx=8, pady=3)
-        ttk.Label(row, text=label, width=18).pack(side="left")
-        var = tk.StringVar(value=str(initial))
-        entry = ttk.Entry(row, textvariable=var, width=10)
-        entry.pack(side="left")
-        var.trace_add("write", lambda *a: self._debounced_set_cast(attr, var, cast))
-        self._field_vars[attr] = (var, cast)
-        return var
+    def _row_entry(self, label, attr, initial, cast=float):
+        row = QtWidgets.QHBoxLayout()
+        lbl = QtWidgets.QLabel(label)
+        lbl.setMinimumWidth(130)
+        row.addWidget(lbl)
+        edit = QtWidgets.QLineEdit(str(initial))
+        edit.setMaximumWidth(100)
+        edit.textEdited.connect(lambda text, attr=attr, cast=cast: self._debounced_set_cast(attr, text, cast))
+        row.addWidget(edit)
+        row.addStretch(1)
+        self._field_vars[attr] = (edit, cast)
+        return row
 
     def _set(self, attr, value):
         setattr(self.model.settings, attr, value)
@@ -124,20 +156,22 @@ class SettingsPanel(ttk.LabelFrame):
             return
         self._set(attr, value)
 
-    def _debounced_set_cast(self, attr, var, cast):
+    def _debounced_set_cast(self, attr, text, cast):
         # Debounced like LayerEditorPanel's fields: applying on every
         # keystroke makes the whole UI feel sluggish, since every model
         # change rebuilds the layer stack panel and restarts the
         # solve-debounce timer.
-        pending = self._apply_after_ids.get(attr)
-        if pending is not None:
-            self.after_cancel(pending)
-        self._apply_after_ids[attr] = self.after(
-            _APPLY_DEBOUNCE_MS, lambda: self._flush_one(attr, var, cast))
+        timer = self._apply_timers.get(attr)
+        if timer is None:
+            timer = QtCore.QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda attr=attr, cast=cast: self._flush_one(attr, cast))
+            self._apply_timers[attr] = timer
+        timer.start(_APPLY_DEBOUNCE_MS)
 
-    def _flush_one(self, attr, var, cast):
-        self._apply_after_ids.pop(attr, None)
-        self._set_cast(attr, var.get(), cast)
+    def _flush_one(self, attr, cast):
+        edit, _cast = self._field_vars[attr]
+        self._set_cast(attr, edit.text(), cast)
 
     def flush_pending(self) -> None:
         """Immediately apply any field edit still waiting on its debounce
@@ -147,25 +181,17 @@ class SettingsPanel(ttk.LabelFrame):
         solved-over with its pre-edit value -- this was letting "Solve
         Now" clicked right after typing a new bias run at the *old* bias
         with no visible error, looking like the biased solve was ignored."""
-        for attr, after_id in list(self._apply_after_ids.items()):
-            self.after_cancel(after_id)
-            self._apply_after_ids.pop(attr, None)
-            var, cast = self._field_vars[attr]
-            self._set_cast(attr, var.get(), cast)
+        for attr, timer in list(self._apply_timers.items()):
+            if timer.isActive():
+                timer.stop()
+                edit, cast = self._field_vars[attr]
+                self._set_cast(attr, edit.text(), cast)
 
     # ------------------------------------------------------------------
-    def _toggle_sweep(self):
-        sweep = self.sweep_var.get()
+    def _toggle_sweep(self, sweep: bool):
         self._set("sweep_mode", sweep)
-        if sweep:
-            self._single_frame.pack_forget()
-            self._sweep_frame.pack(fill="x")
-        else:
-            self._sweep_frame.pack_forget()
-            self._single_frame.pack(fill="x")
+        self._single_widget.setVisible(not sweep)
+        self._sweep_widget.setVisible(sweep)
 
-    def _toggle_advanced(self):
-        if self._adv_var.get():
-            self._adv_frame.pack(fill="x")
-        else:
-            self._adv_frame.pack_forget()
+    def _toggle_advanced(self, expanded: bool):
+        self._adv_widget.setVisible(expanded)

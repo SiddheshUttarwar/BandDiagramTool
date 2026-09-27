@@ -9,26 +9,24 @@ setting contacts, and either solving a single bias point or running a
 voltage sweep — no Python required.
 """
 
+import sys
+
 import matplotlib
-matplotlib.use("TkAgg")
+matplotlib.use("QtAgg")
 
-import tkinter as tk
-from tkinter import ttk
+from PyQt6 import QtGui, QtWidgets
 
+from gui import theme
 from gui.app import App
 
 
 def main():
-    root = tk.Tk()
-    style = ttk.Style()
-    for theme in ("vista", "clam"):
-        try:
-            style.theme_use(theme)
-            break
-        except tk.TclError:
-            continue
-    App(root)
-    root.mainloop()
+    app = QtWidgets.QApplication(sys.argv)
+    app.setFont(QtGui.QFont(theme.FONT_FAMILY, theme.FONT_SIZE_PT))
+    app.setStyleSheet(theme.stylesheet())
+    window = App()
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

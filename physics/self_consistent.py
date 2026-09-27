@@ -44,25 +44,26 @@ Two modes:
 from __future__ import annotations
 
 import logging
+import weakref
 import numpy as np
 from scipy.optimize import brentq
 from scipy.ndimage import gaussian_filter1d
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from typing import Callable, Optional
 
 from devices.grid_builder import GridData
 from physics.fermi_dirac import (
     electron_density, hole_density,
     quantum_electron_density, quantum_hole_density,
-    Efn_from_n, Efp_from_p,
 )
-from physics.poisson import solve_poisson, solve_poisson_newton, electric_field, _assemble_laplacian
+from physics.poisson import (
+    solve_poisson, solve_poisson_newton, solve_poisson_newton_ptc,
+    electric_field, _assemble_laplacian,
+)
 from physics.schrodinger import solve_schrodinger, hole_potential
-from physics.drift_diffusion import (
-    solve_continuity_electron, solve_continuity_hole, compute_recombination,
-    compute_current_density,
-)
-from physics.coupled_solver import solve_coupled_dd, QuantumState, SolveCancelled
+from physics.drift_diffusion import compute_current_density, compute_recombination_components
+from physics.gain import compute_gain_spectrum
+from physics.coupled_solver import solve_coupled_dd, QuantumState, SolveCancelled, CoupledResult
 from physics.optical import (
     ground_state_transition, dominant_transition,
     overlap_squared, hole_subband_energy,
@@ -89,6 +90,27 @@ _AA_STEP_SAFEGUARD = 5.0
 _ARMIJO_C = 1e-4
 _MAX_BACKTRACKS = 20
 _MIN_LINE_SEARCH_STEP = 1e-4
+
+# Bias-coupled outer loop fail-fast (see its use below, near dt_ptc's
+# initialization): number of consecutive non-improving outer iterations,
+# with the inner coupled solve also failing to converge, before giving up
+# rather than continuing to max_iter. A single stalled iteration is normal
+# noise; this many in a row with no inner convergence either is not.
+_OUTER_STAGNATION_PATIENCE = 15
+# An outer-iteration |dphi| residual must shrink by at least this fraction
+# relative to the best seen so far to count as "real" improvement (not
+# floating-point/PTC-retry jitter) and reset the stagnation counter.
+_OUTER_STAGNATION_MIN_IMPROVEMENT = 0.99
+
+# R_series fast path (see _solve_bias_with_series_resistance): number of
+# damped fixed-point iterations tried before giving up and falling back to
+# the slower, more robust bisection-with-jitter. nextnano++ doesn't even
+# solve this inside the device physics at all -- it sweeps V_internal and
+# applies R_series as post-hoc arithmetic on the resulting J-V curve (see
+# this session's nextnano++ documentation research) -- so a handful of
+# fixed-point iterations to hit one specific target V_applied is already
+# more work than nextnano's own approach, not less.
+_R_SERIES_FIXED_POINT_MAXITER = 8
 
 
 class _AndersonMixer:
@@ -456,6 +478,27 @@ class SolverResult:
     qcse_dominant_overlap: Optional[float] = None
     qcse_dominant_pair: Optional[tuple] = None   # (ie, ih)
 
+    # Recombination rates [cm^-3 s^-1], one value per grid point, computed
+    # from the converged final n/p/ni (see physics.drift_diffusion.
+    # compute_recombination_components -- same coefficients the solver's
+    # own continuity-equation R term uses internally, just split apart by
+    # mechanism here for diagnostics/plotting).
+    R_srh: Optional[np.ndarray] = None
+    R_rad: Optional[np.ndarray] = None
+    R_aug: Optional[np.ndarray] = None
+
+    # Optical gain spectrum (quantum mode only -- see physics.gain): material
+    # gain g(hv) [cm^-1] vs photon energy, from the quantum well's own
+    # confined subbands (E_e/psi_e, hole bands) and quasi-Fermi occupation,
+    # Lorentzian-broadened across subband-pair transitions. None when
+    # quantum=False or no confined states were found in the design's own
+    # quantum well (qw_window).
+    gain_energy_eV: Optional[np.ndarray] = None
+    gain_wavelength_nm: Optional[np.ndarray] = None
+    gain_spectrum_cm1: Optional[np.ndarray] = None
+    peak_gain_cm1: Optional[float] = None
+    peak_gain_wavelength_nm: Optional[float] = None
+
     # Surface/interface charge states (devices.layer.SurfaceCharge), for
     # plotting the trap energy level(s) directly on the band diagram so
     # Fermi-level pinning (Efn/Efp sitting at the trap level once its areal
@@ -493,6 +536,248 @@ class SolverResult:
     Ev0: np.ndarray = field(default_factory=lambda: np.array([]))
     ND: np.ndarray  = field(default_factory=lambda: np.array([]))
     NA: np.ndarray  = field(default_factory=lambda: np.array([]))
+
+
+def _current_density_from_result(result: "SolverResult", grid: GridData) -> float:
+    """Gamma-corrected (degeneracy-aware) Scharfetter-Gummel current density
+    [A/cm^2] at a converged bias solve -- same psi_n_eff/psi_p_eff
+    construction used by the R_series IR-drop calculation elsewhere in this
+    module, factored out so _solve_bias_with_series_resistance can reuse it
+    without duplicating the degeneracy-correction algebra."""
+    g = grid
+    T = g.T
+    kBT_eV = kB * T / _q
+    mu_n_avg = float(np.mean(300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al))
+    mu_p_avg = float(np.mean(10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al))
+    n_boltz = np.maximum(g.Nc * np.exp(np.clip((result.Efn - result.Ec) / kBT_eV, -200, 200)), 1e-30)
+    gamma_n = np.maximum(result.n, 1e-30) / n_boltz
+    psi_n_eff = -result.Ec + kBT_eV * np.log(g.Nc / g.Nc[0]) + kBT_eV * np.log(np.maximum(gamma_n, 1e-10))
+    p_boltz = np.maximum(g.Nv * np.exp(np.clip((result.Ev - result.Efp) / kBT_eV, -200, 200)), 1e-30)
+    gamma_p = np.maximum(result.p, 1e-30) / p_boltz
+    psi_p_eff = result.Ev + kBT_eV * np.log(g.Nv / g.Nv[0]) + kBT_eV * np.log(np.maximum(gamma_p, 1e-10))
+    return compute_current_density(result.n, result.p, psi_n_eff, psi_p_eff, g.dx, mu_n_avg, mu_p_avg, T)
+
+
+def _solve_bias_with_series_resistance(
+    grid: GridData, V_applied: float, R_series: float, quantum: bool,
+    n_states_e: int, n_states_h: int, max_iter: int, tol: float,
+    alpha: float, alpha_min: float, alpha_max: Optional[float], anderson_m: int,
+    verbose: bool, log_fn: Optional[Callable[[str], None]],
+    cancel_check: Optional[Callable[[], bool]],
+) -> "SolverResult":
+    """
+    R_series > 0 handling, decoupled entirely from the coupled-Newton bias
+    solve itself: find V_internal such that
+        V_internal + |J(V_internal)| * R_series == V_applied
+    where every trial is an independent, from-scratch call to
+    solve_self_consistent(V_applied=V_internal, R_series=0.0) -- the
+    already-robust, already-validated fresh-solve path.
+
+    Tries a fast damped fixed-point iteration on V_internal first (a
+    handful of direct solves for a smooth I-V curve), falling back to the
+    slower bisection-with-jitter below only if that doesn't converge. Worth
+    noting nextnano++ itself doesn't solve this inside the device physics
+    at all -- it sweeps V_internal and applies R_series as post-hoc
+    arithmetic on the resulting J-V curve (see this session's nextnano++
+    documentation research) -- so even the fast path here, which targets
+    one specific V_applied directly, is doing strictly more work than
+    nextnano's own approach ever needs to.
+
+    This replaces an earlier version that relaxed V_internal *inside* the
+    same outer Gummel loop driving the coupled solve, carrying phi/Efn/Efp
+    forward from one V_internal guess to the next. That is exactly the
+    continuation-from-a-mismatched-state fragility this whole session spent
+    fixing for voltage ramping, just hidden inside the R_series branch
+    instead: since phi_right changes every outer iteration as V_internal
+    moves, each iteration is effectively a *different* bias point, solved
+    by continuing from a state that converged at the *previous* iteration's
+    different boundary -- and the outer loop's fail-fast check (needed to
+    catch [[bug-quasi-fermi-pinning]]'s false-convergence failure mode)
+    aborted the entire solve the moment any single one of these mismatched
+    attempts failed to converge. Confirmed empirically: enabling R_series
+    made an already-marginal device (a 43-layer UV-LED replica) fail at
+    *every* tested voltage, where R_series=0 on the identical device at
+    least succeeded at a few. Bisection with independent fresh trials has
+    no such coupling between steps: a single failed trial just narrows the
+    bracket, exactly like sweep_voltage's own bisection-on-failure already
+    does for voltage steps.
+    """
+    _log = log_fn if log_fn is not None else print
+
+    def eval_at(V_int: float) -> "SolverResult":
+        # Forward the caller's own verbose flag: each trial here can be a
+        # full, possibly-long-running solve (this device's known patchy
+        # cold-start convergence applies here too), and silencing it
+        # entirely left the GUI/CLI showing nothing but a sparse
+        # "bisection iter N" line every so often -- indistinguishable from
+        # a hang. Prefixed so per-iteration lines are traceable to which
+        # V_internal trial they belong to.
+        def _prefixed_log(msg: str, _V=V_int) -> None:
+            _log(f"    [V_internal={_V:.4f}] {msg}")
+        return solve_self_consistent(
+            grid, V_applied=V_int, R_series=0.0, quantum=quantum,
+            n_states_e=n_states_e, n_states_h=n_states_h,
+            max_iter=max_iter, tol=tol, alpha=alpha, alpha_min=alpha_min,
+            alpha_max=alpha_max, anderson_m=anderson_m, verbose=verbose,
+            log_fn=(_prefixed_log if verbose else log_fn), cancel_check=cancel_check,
+        )
+
+    gap_tol = max(tol * 10.0, 1e-4)
+    best: Optional[tuple] = None   # (abs_gap, result, V_internal)
+
+    # Fast path: damped fixed-point iteration directly on
+    #   V_internal = V_applied - |J(V_internal)| * R_series
+    # instead of bisecting a search bracket. This is the natural fast
+    # analogue of nextnano++'s own approach (see this function's docstring
+    # update above): each iteration is one direct solve, converging in a
+    # handful of steps for a smooth I-V curve, versus bisection's up to 30
+    # iterations x 5 jittered retries = up to 150 solves. Falls straight
+    # through to the existing bisection below (seeded with whatever partial
+    # progress this made) the moment a trial fails to converge or the gap
+    # stops improving -- never trusted past that point, so it can't make
+    # a hard device any less robust than before, only faster on easy ones.
+    V_internal = V_applied
+    damping = 0.5
+    prev_gap = None
+    for it in range(_R_SERIES_FIXED_POINT_MAXITER):
+        if cancel_check is not None and cancel_check():
+            raise SolveCancelled("Solve cancelled by user")
+        res = eval_at(V_internal)
+        if not res.converged:
+            if verbose:
+                _log(f"  R_series fixed-point iter {it+1}: V_internal={V_internal:.4f} "
+                     f"did not converge -- falling back to bisection")
+            break
+
+        J = _current_density_from_result(res, grid)
+        implied_V_applied = V_internal + abs(J) * R_series
+        gap = implied_V_applied - V_applied
+        if verbose:
+            _log(f"  R_series fixed-point iter {it+1}: V_internal={V_internal:.4f}  "
+                 f"J={J:.4e} A/cm^2  implied V_applied={implied_V_applied:.4f} "
+                 f"(target {V_applied:.4f})")
+        if best is None or abs(gap) < best[0]:
+            best = (abs(gap), res, V_internal)
+        if abs(gap) < gap_tol:
+            return _dc_replace(res, V_applied=V_applied, V_internal=V_internal, converged=True)
+
+        if prev_gap is not None and abs(gap) >= abs(prev_gap):
+            # Not improving -- shrink damping (adaptive, same principle as
+            # the Gummel solver's own auto-shrinking alpha) rather than
+            # trusting a step that isn't working.
+            damping = max(damping * 0.5, 0.05)
+        prev_gap = gap
+
+        V_internal_target = V_applied - abs(J) * R_series
+        V_internal = min(max(V_internal + damping * (V_internal_target - V_internal), 0.0), V_applied)
+    else:
+        if verbose:
+            _log(f"  R_series fixed-point path used its full budget "
+                 f"({_R_SERIES_FIXED_POINT_MAXITER} iters) without converging "
+                 f"-- falling back to bisection")
+
+    lo, hi = 0.0, V_applied
+    for it in range(30):
+        if cancel_check is not None and cancel_check():
+            raise SolveCancelled("Solve cancelled by user")
+        V_mid = 0.5 * (lo + hi)
+        # A failed trial is patchy-solver noise, not evidence V_mid itself
+        # is on the wrong side of the root (this device's fresh-solve
+        # convergence is known to be sparse/unpredictable across bias, not
+        # systematically worse at higher V -- see today's MQW-device
+        # findings). Nudge by small jittered offsets before ever touching
+        # the bracket, so an isolated non-convergent point can't wrongly
+        # collapse lo/hi the way treating it as "too high" did.
+        res = None
+        for jitter in (0.0, 0.01, -0.01, 0.03, -0.03):
+            V_try = min(max(V_mid + jitter * (hi - lo), lo), hi)
+            res = eval_at(V_try)
+            if res.converged:
+                break
+        if res is None or not res.converged:
+            if verbose:
+                _log(f"  R_series bisection iter {it+1:2d}: V_internal~{V_mid:.4f} "
+                     f"did not converge (incl. jittered retries); skipping")
+            continue
+
+        J = _current_density_from_result(res, grid)
+        implied_V_applied = V_try + abs(J) * R_series
+        gap = implied_V_applied - V_applied
+        if verbose:
+            _log(f"  R_series bisection iter {it+1:2d}: V_internal={V_try:.4f}  "
+                 f"J={J:.4e} A/cm^2  implied V_applied={implied_V_applied:.4f} "
+                 f"(target {V_applied:.4f})")
+        if best is None or abs(gap) < best[0]:
+            best = (abs(gap), res, V_try)
+        if abs(gap) < max(tol * 10.0, 1e-4):
+            break
+        if implied_V_applied > V_applied:
+            hi = V_try
+        else:
+            lo = V_try
+
+    if best is None:
+        # Every single trial failed to converge -- return an honest failure
+        # rather than raising, shaped like the V=0 equilibrium result so
+        # callers always get a well-formed SolverResult.
+        res0 = eval_at(0.0)
+        return _dc_replace(res0, V_applied=V_applied, V_internal=0.0, converged=False)
+
+    best_gap, res, V_internal_found = best
+    return _dc_replace(
+        res, V_applied=V_applied, V_internal=V_internal_found,
+        converged=bool(res.converged and best_gap < max(tol * 10.0, 1e-4)),
+    )
+
+
+# Per-grid cache of the equilibrium (V=0) phi profile, used to seed every
+# fresh bias solve's initial guess (see _get_equilibrium_phi_init below).
+# Keyed by id(grid) with a weakref finalizer to evict the entry when that
+# grid object is actually garbage-collected -- GridData has no __hash__
+# (dataclass default __eq__ makes it unhashable), so it can't be a
+# WeakKeyDictionary key directly, and a plain id()-keyed dict alone risks a
+# stale hit if a *different*, later grid object happens to reuse a freed id.
+_equilibrium_phi_cache: dict = {}
+
+
+def _get_equilibrium_phi_init(
+    grid: GridData, quantum: bool, n_states_e: int, n_states_h: int,
+    log_fn: Optional[Callable[[str], None]], cancel_check: Optional[Callable[[], bool]],
+) -> Optional[np.ndarray]:
+    """
+    The equilibrium band profile is a far better starting guess for a
+    *fresh* bias solve's phi than the generic per-point charge-neutral
+    approximation (solve_self_consistent's "no phi_init" default): it's the
+    exact, fully self-consistent solution at V=0 (now reliably fast via PTC
+    -- see the equilibrium loop's own docstring), capturing quantum
+    confinement, polarization, and composition effects the charge-neutral
+    approximation only estimates. Unlike continuation across *biased*
+    points (the mechanism that caused [[bug-quasi-fermi-pinning]]'s masked
+    quasi-Fermi splits), this seeds from the *same* trusted reference point
+    every time, regardless of which bias is being solved or whether some
+    other nearby bias point converged -- confirmed empirically to matter
+    for devices with many densely-packed heterointerfaces, where a generic
+    flat/charge-neutral guess is a poor approximation of the true
+    equilibrium shape and the coupled solve struggles to find it from cold.
+
+    Efn/Efp keep their own generic fresh defaults (flat 0 / flat -V_applied)
+    regardless -- only phi is seeded this way.
+
+    Returns None (falls back to the generic default) if the equilibrium
+    solve itself doesn't converge, rather than seeding from a known-bad
+    profile.
+    """
+    key = id(grid)
+    if key not in _equilibrium_phi_cache:
+        eq_result = solve_self_consistent(
+            grid, V_applied=0.0, quantum=quantum,
+            n_states_e=n_states_e, n_states_h=n_states_h,
+            max_iter=800, tol=1e-6, verbose=False,
+            log_fn=log_fn, cancel_check=cancel_check,
+        )
+        _equilibrium_phi_cache[key] = eq_result.phi.copy() if eq_result.converged else None
+        weakref.finalize(grid, _equilibrium_phi_cache.pop, key, None)
+    return _equilibrium_phi_cache[key]
 
 
 # ---------------------------------------------------------------------------
@@ -546,13 +831,29 @@ def solve_self_consistent(
     tol        : convergence threshold on max|Δphi| [V]
     alpha      : initial damping factor applied inside Anderson mixer (0 < alpha ≤ 1)
     alpha_min  : lower bound the adaptive damping factor can shrink to
-    alpha_max  : upper bound the adaptive damping factor can grow to. Defaults
-                 to `alpha` itself (i.e. adaptation can only recover a
-                 damping factor that was shrunk for stability, never exceed
-                 the caller's chosen starting point) — this stiff nonlinear
-                 system reliably loses stability once alpha grows much past
-                 what a device actually needs, so growing beyond the
-                 starting alpha is opt-in only.
+    alpha_max  : upper bound the adaptive damping factor can grow to.
+                 Defaults to `min(4*alpha, 0.6)` for the equilibrium loop
+                 this actually governs (see "Note on scope" below) --
+                 raised from the previous default of `alpha` itself (no
+                 growth allowed at all) after confirming empirically
+                 (2026-09-22) across three representative devices,
+                 including the specific historically-fragile one the old
+                 "reliably loses stability" caution named, that growth up
+                 to this range is safe and gives a real speedup (4x fewer
+                 iterations on all three, exact same converged answer).
+                 That caution turned out to describe the *biased* solve
+                 path below, which doesn't even use alpha_max any more
+                 (superseded by the coupled JFNK solver) -- not this
+                 equilibrium path, which was never actually the case the
+                 instability was observed in. A HEMT-style undoped
+                 heterojunction (thin AlGaN barrier on a GaN buffer, 2DEG
+                 forming purely from the polarization discontinuity) is a
+                 good example of a device that benefits substantially:
+                 its much sharper/stronger interface transient made the
+                 old fixed low ceiling converge far slower (1405
+                 iterations for a device whose LED-style counterparts
+                 need ~150-400) without ever being unstable at a higher
+                 one.
     anderson_m : Anderson history length (0 = plain damped iteration)
     verbose    : emit iteration residuals via log_fn (default print)
     log_fn     : callable(str) used for verbose output instead of the
@@ -589,41 +890,84 @@ def solve_self_consistent(
     _log   = log_fn if log_fn is not None else print
     if alpha_max is None:
         alpha_max = alpha
-    # See "Note on scope" above: adaptive alpha / safeguarded AA are only
-    # used for the unbiased electrostatic loop; biased solves use the
-    # Armijo backtracking line search instead.
+    # alpha/alpha_min/alpha_max/anderson_m are accepted for backward
+    # compatibility but no longer drive either regime: equilibrium now uses
+    # pseudo-transient continuation (see "e." below, dt_ptc) instead of
+    # adaptive-alpha damping + Anderson mixing, and biased solves use the
+    # fully-coupled Newton solve in physics.coupled_solver. Neither has a
+    # user-tunable step-size knob any more.
     bias_coupled = (V_applied != 0.0)
-    # Starting step size for the biased-solve line search below: the
-    # caller's alpha, captured once here so it stays fixed as a ceiling
-    # across iterations (the `alpha` name itself gets reused per-iteration
-    # for logging/alpha_history). See the bias_coupled branch of "e. Mixing".
-    bias_alpha_ceiling = alpha
+
+    if bias_coupled and R_series > 0.0:
+        return _solve_bias_with_series_resistance(
+            grid, V_applied, R_series, quantum, n_states_e, n_states_h,
+            max_iter, tol, alpha, alpha_min, alpha_max, anderson_m,
+            verbose, log_fn, cancel_check,
+        )
+
+    if bias_coupled and phi_init is None:
+        phi_init = _get_equilibrium_phi_init(
+            grid, quantum, n_states_e, n_states_h, log_fn, cancel_check)
 
     # --- Boundary potentials ---
     phi_left  = g.phi_bottom_eq
     V_internal = V_applied
     phi_right = g.phi_top_eq + V_internal
 
-    # --- Quasi-Fermi levels:    # Initial guess for electrostatics
+    # --- Initial guess linear drop for bias ---
+    # To prevent huge unphysical delta-function fields at the boundary or 
+    # massive inversion in Efp, we distribute the applied bias linearly.
+    linear_bias_drop = V_applied * (g.x_nm / g.x_nm[-1])
+
+    # --- Electrostatics ---
     if phi_init is not None:
         phi = phi_init.copy()
         # MUST update boundaries to current V_applied!
+        phi += linear_bias_drop
         phi[0] = phi_left
         phi[-1] = phi_right
     else:
         phi = np.zeros(g.N)
         
+    # --- Quasi-Fermi levels ---
     if Efn_init is not None:
         Efn = Efn_init.copy()
     else:
-        Efn = np.zeros(g.N)
+        Efn = -linear_bias_drop.copy()
         
     if Efp_init is not None:
         Efp = Efp_init.copy()
     else:
-        Efp = np.full(g.N, -V_applied)
+        Efp = -linear_bias_drop.copy()
         
     # Enforce contact boundary conditions immediately
+    Efn[0] = 0.0
+    Efn[-1] = -V_applied
+    Efp[0] = 0.0
+    Efp[-1] = -V_applied
+
+    # Smooth the boundary-to-interior transition of the *initial guess*
+    # (an initialization heuristic, not physics -- same idea as phi's own
+    # smoothing just below) so the coupled Newton-Krylov solve starts from
+    # a profile with no artificial single-cell jump at the contact.
+    # Without this, only the two array endpoints above get touched -- the
+    # entire interior is left at its old value (e.g. the previous,
+    # lower-bias converged profile during a voltage ramp/continuation
+    # step) -- creating exactly a single-cell step discontinuity right
+    # where the new bias condition is applied. That discontinuity is what
+    # produced the quasi-Fermi pinning bug ([[bug-quasi-fermi-pinning]]):
+    # JFNK's own scaled convergence check can be satisfied by a small
+    # local correction to that one cell alone -- especially in a heavily
+    # one-sided-doped region, where the local carrier-scale normalization
+    # is largest -- without ever needing to propagate the new bias into
+    # the rest of the device, reproducing "the entire voltage drop
+    # landing in one boundary cell" even though solve_coupled_dd reports
+    # converged=True. Smoothing gives JFNK a physically reasonable
+    # starting *gradient* to work from instead of a delta function.
+    dx_typical_ef = float(np.median(np.atleast_1d(g.dx)))
+    sigma_pts_ef = max(2, int(5.0e-9 / dx_typical_ef))  # same ~5nm scale as phi's smoothing below
+    Efn = gaussian_filter1d(Efn, sigma=sigma_pts_ef)
+    Efp = gaussian_filter1d(Efp, sigma=sigma_pts_ef)
     Efn[0] = 0.0
     Efn[-1] = -V_applied
     Efp[0] = 0.0
@@ -730,10 +1074,6 @@ def solve_self_consistent(
                   f"= [{g.x_nm[q_i0]:.1f}, {g.x_nm[q_i1 - 1]:.1f}] nm "
                   f"(of {g.N} points spanning [0, {g.x_nm[-1]:.1f}] nm)")
 
-    # --- Anderson mixer (safeguarded: reset + fall back to damping whenever
-    # the residual grows from one iteration to the next) ---
-    mixer = _AndersonMixer(m=anderson_m, alpha=alpha)
-
     E_e = E_h = psi_e = psi_h = None
     E_h_lh = psi_h_lh = E_h_so = psi_h_so = None
     converged = False
@@ -743,6 +1083,26 @@ def solve_self_consistent(
     residual_history: list = []
     alpha_history: list = []
     good_streak = 0   # consecutive non-worsening iterations (growth needs a streak, not one lucky step)
+    dt_ptc = 1e-3     # equilibrium-only PTC pseudo-time step (see "d/e" below)
+
+    # Bias-coupled outer-loop fail-fast (nextnano++-style: its own
+    # convergence tutorial explicitly advises against waiting out a
+    # max_iter budget once it's clear a solve isn't converging -- see the
+    # nextnano++ documentation research this session did). Before this,
+    # a device/voltage combination whose inner coupled Newton solve
+    # (solve_coupled_dd) never converges would still burn the *entire*
+    # max_iter outer-loop budget (which the GUI defaults to 5000) doing
+    # so, each outer iteration re-running a ~40-step inner PTC-direct
+    # solve from scratch -- this is what produced the hour-long hangs on
+    # non-convergent voltages. Tracks the best (smallest) outer |dphi|
+    # residual seen so far; if it hasn't meaningfully improved for
+    # _OUTER_STAGNATION_PATIENCE consecutive iterations *and* the inner
+    # coupled solve is also failing to converge on its own terms, the
+    # outer loop is not making progress and won't suddenly start --
+    # abort early rather than continue for possibly thousands more
+    # iterations of the same expensive, fruitless work.
+    best_outer_residual = np.inf
+    stagnant_outer_iters = 0
 
     for iteration in range(max_iter):
         if cancel_check is not None and cancel_check():
@@ -794,30 +1154,48 @@ def solve_self_consistent(
             mu_n_avg = float(np.mean(300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al))
             mu_p_avg = float(np.mean(10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al))
 
-            quantum_state_cd = None
-            if quantum:
-                quantum_state_cd = QuantumState(
-                    psi_e=psi_e, E_e=E_e, m_e=g.m_e,
-                    psi_h=psi_h, E_h=E_h, m_hh=g.m_hh,
-                    psi_h_lh=psi_h_lh, E_h_lh=E_h_lh, m_lh=g.m_lh,
-                    psi_h_so=psi_h_so, E_h_so=E_h_so, m_so=g.m_so,
-                    region_mask=region_mask,
-                )
+            quantum_gamma_n = None
+            quantum_gamma_p = None
 
             cd_result = solve_coupled_dd(
                 phi, Efn, Efp, g.Ec0, g.Ev0, g.Nc, g.Nv, g.ND, g.NA, Ed_x, Ea_x,
                 g.pol_rho, g.eps_r, g.dx, T, mu_n_avg, mu_p_avg,
                 phi_left, phi_right, 0.0, -V_internal, 0.0, -V_internal,
                 surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
-                quantum_state=quantum_state_cd,
-                tol=1e-3, maxiter=80,
+                quantum_gamma_n=None, quantum_gamma_p=None,
+                tol=1e-3, maxiter=40,
                 log_fn=(_log if verbose else None),
                 cancel_check=cancel_check,
             )
             phi_candidate = cd_result.phi
             Efn = cd_result.Efn
             Efp = cd_result.Efp
-            use_aa = False
+
+            if quantum and iteration > 0:
+                # The inner solver ran classically. Now we calculate the exact quantum charge
+                # using the NEW quasi-Fermi levels and the OLD wavefunctions.
+                n_new_q = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T),
+                                           electron_density(g.Ec0 - phi_candidate, Efn, g.Nc, T), region_mask)
+                p_new_q = _blended_density(_total_quantum_hole_density(hole_bands, Efp, T, g),
+                                           hole_density(g.Ev0 - phi_candidate, Efp, g.Nv, T), region_mask)
+                                           
+                dn_dphi = -_q / kBT_eV * n_new_q
+                dp_dphi = -_q / kBT_eV * p_new_q
+                
+                dNd_dphi = np.zeros_like(phi)
+                dNa_dphi = np.zeros_like(phi)
+                
+                # Single PTC-damped Poisson Newton step to incorporate quantum charge into phi
+                phi_q = solve_poisson_newton_ptc(
+                    phi_candidate, g.eps_r, n_new_q, p_new_q, g.ND, g.NA, dNd_dphi, dNa_dphi,
+                    g.pol_rho, g.dx, phi_left, phi_right, T, dt=0.5
+                )
+                
+                # Decaying damping to prevent oscillations between classical DD and quantum Poisson
+                # This guarantees the limit cycle collapses to the fixed point
+                damping = max(0.01, 0.5 / iteration)
+                phi_candidate = phi + damping * (phi_q - phi)
+
             # Reuses alpha_history's slot to record the NK iteration count
             # for this step (not a damping factor -- there isn't one here).
             alpha = float(cd_result.n_iter)
@@ -826,14 +1204,10 @@ def solve_self_consistent(
             residual = np.max(np.abs(phi_candidate - phi))
             residual_history.append(float(residual))
 
-            # Series resistance (lumped model): recompute J_total from the
-            # fully-converged n,p and relax V_internal toward its
-            # self-consistent value, same smoothing as the old code. This
-            # lags by one outer iteration (V_internal used *above* was from
-            # the previous pass) -- that's what this outer loop now mainly
-            # exists to settle, along with the quantum Schrodinger update
-            # below, since the coupled PDE solve itself is already fully
-            # converged internally on every call.
+            # R_series > 0 is handled entirely by _solve_bias_with_series_
+            # resistance before this loop ever runs (see the top of this
+            # function) -- this call always has R_series == 0, so V_internal
+            # is just V_applied, fixed for the whole solve.
             Ec_cd = g.Ec0 - phi_candidate
             Ev_cd = g.Ev0 - phi_candidate
             if quantum:
@@ -846,21 +1220,8 @@ def solve_self_consistent(
                 n = electron_density(Ec_cd, Efn, g.Nc, T)
                 p = hole_density(Ev_cd, Efp, g.Nv, T)
 
-            if R_series > 0.0:
-                n_boltz_cd = np.maximum(g.Nc * np.exp(np.clip((Efn - Ec_cd) / kBT_eV, -200, 200)), 1e-30)
-                gamma_n_cd = np.maximum(n, 1e-30) / n_boltz_cd
-                psi_n_eff_cd = -Ec_cd + kBT_eV * np.log(g.Nc / g.Nc[0]) + kBT_eV * np.log(np.maximum(gamma_n_cd, 1e-10))
-                p_boltz_cd = np.maximum(g.Nv * np.exp(np.clip((Ev_cd - Efp) / kBT_eV, -200, 200)), 1e-30)
-                gamma_p_cd = np.maximum(p, 1e-30) / p_boltz_cd
-                psi_p_eff_cd = Ev_cd + kBT_eV * np.log(g.Nv / g.Nv[0]) + kBT_eV * np.log(np.maximum(gamma_p_cd, 1e-10))
-                J_total = compute_current_density(n, p, psi_n_eff_cd, psi_p_eff_cd,
-                                                   g.dx, mu_n_avg, mu_p_avg, T)
-                V_internal_target = max(0.0, V_applied - abs(J_total) * R_series)
-                V_internal = 0.9 * V_internal + 0.1 * V_internal_target
-                phi_right = g.phi_top_eq + V_internal
-            else:
-                V_internal = V_applied
-                phi_right = g.phi_top_eq + V_applied
+            V_internal = V_applied
+            phi_right = g.phi_top_eq + V_applied
         else:
             # d. Newton-Raphson Poisson step (equilibrium only -- biased
             # solves use the coupled solver above instead).
@@ -935,54 +1296,64 @@ def solve_self_consistent(
             min_D_equivalent_n = 1e16  # cm^-3 pseudo-carrier density for damping
             dNd_dphi = np.minimum(dNd_dphi, -min_D_equivalent_n / kBT_eV)
 
-            phi_new = solve_poisson_newton(
-                phi, g.eps_r, n, p, Nd_plus, Na_minus, dNd_dphi, dNa_dphi, g.pol_rho,
-                g.dx, phi_left, phi_right, T
+            # e. Pseudo-transient continuation (equilibrium only).
+            #
+            # Previously: a plain Newton step (solve_poisson_newton) mixed
+            # into phi afterward via safeguarded, adaptive-alpha damping +
+            # Anderson acceleration. That reliably converges ordinary
+            # devices, but was found to settle into a genuine bounded limit
+            # cycle (residual wandering in a narrow band indefinitely,
+            # never shrinking below it even after 3000+ iterations, alpha
+            # permanently floored) on a device with many densely-packed
+            # (~2nm period) heterointerfaces with large polarization
+            # discontinuities -- confirmed not a slow-but-real convergence
+            # (residual genuinely stops shrinking, doesn't just shrink
+            # slowly) via a from-scratch grid-point-level trace. Post-hoc
+            # linear damping/extrapolation of an already-computed Newton
+            # step can't fix that: it still fully trusts the same
+            # undamped, potentially-oversized step direction every time.
+            #
+            # PTC instead damps the *Jacobian* directly (see
+            # solve_poisson_newton_ptc), the same technique already proven
+            # for exactly this "stiff/ill-conditioned, damped-mixing
+            # oscillates or stalls" failure mode on the fully-coupled bias
+            # system (physics.coupled_solver._solve_ptc_direct -- see
+            # [[bug-quasi-fermi-pinning]]): start from a small, heavily-
+            # damped pseudo-time step (dt_ptc), accept it only if the TRUE
+            # nonlinear Poisson residual (_nonlinear_poisson_residual_norm,
+            # previously dead code from an abandoned bias-solve line search
+            # -- reused here) actually improves, growing dt (SER) on
+            # acceptance and shrinking it (retrying from the same phi) on
+            # rejection. dt -> infinity recovers the plain Newton step
+            # exactly, so this never gives up robustness compared to before,
+            # only adds it.
+            res_current = _nonlinear_poisson_residual_norm(
+                phi, g, Efn, Efp, T, kBT_eV, Ed_x, Ea_x,
+                surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
             )
+            n_ptc_tries = 0
+            while True:
+                n_ptc_tries += 1
+                phi_trial = solve_poisson_newton_ptc(
+                    phi, g.eps_r, n, p, Nd_plus, Na_minus, dNd_dphi, dNa_dphi,
+                    g.pol_rho, g.dx, phi_left, phi_right, T, dt_ptc,
+                )
+                res_trial = _nonlinear_poisson_residual_norm(
+                    phi_trial, g, Efn, Efp, T, kBT_eV, Ed_x, Ea_x,
+                    surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
+                )
+                if res_trial <= res_current or n_ptc_tries >= 30:
+                    growth = min(res_current / max(res_trial, 1e-300), 3.0)
+                    dt_ptc *= max(growth, 1.0)
+                    break
+                dt_ptc *= 0.3
 
-            # Convergence residual: max change the Newton step wants to make
-            residual = np.max(np.abs(phi_new - phi))
-            residual_history.append(float(residual))
-
-            # e. Mixing (equilibrium only).
-            # Unbiased (equilibrium) solves: safeguarded, adaptive mixing.
-            # Adapt alpha for *this* step from how the previous step's
-            # residual trend looked: shrink immediately (floored at
-            # alpha_min) on any residual growth (reset the good streak),
-            # but only grow (capped at alpha_max) after several
-            # *consecutive* non-worsening iterations — a single lucky
-            # iteration is not reliable evidence, and growing off one data
-            # point is what let alpha run away into instability.
-            if residual > prev_residual:
-                alpha = max(alpha_min, alpha * 0.5)
-                good_streak = 0
-            else:
-                good_streak += 1
-                if good_streak >= 3:
-                    alpha = min(alpha_max, alpha * 1.05)
-            mixer.alpha = alpha
+            phi_candidate = phi_trial
+            residual = float(np.max(np.abs(phi_candidate - phi)))
+            residual_history.append(residual)
+            alpha = dt_ptc   # reuse alpha_history's slot to record dt_ptc
             alpha_history.append(float(alpha))
-
-            # Try Anderson extrapolation, but reject it *before* committing
-            # to phi if its step is disproportionately larger than the
-            # plain damped step would be. A runaway extrapolation is
-            # exactly the failure mode the old code sidestepped by
-            # disabling AA outright; checking after the fact (i.e. only via
-            # next iteration's residual) is too late, since phi has already
-            # been corrupted by then. This check catches it before phi is
-            # ever updated.
-            phi_damped  = (1.0 - alpha) * phi + alpha * phi_new
-            step_damped = alpha * residual
-            use_aa = anderson_m > 0
-            phi_candidate = phi_damped
-            if use_aa:
-                phi_aa  = mixer.mix(phi, phi_new)
-                step_aa = np.max(np.abs(phi_aa - phi))
-                if step_aa > _AA_STEP_SAFEGUARD * max(step_damped, 1e-8):
-                    mixer.reset()   # extrapolation blew up; discard history
-                    use_aa = False
-                else:
-                    phi_candidate = phi_aa
+            use_aa = False
 
         if verbose:
             if bias_coupled:
@@ -991,7 +1362,7 @@ def solve_self_consistent(
                       f"in {cd_result.n_iter} iters (residual={cd_result.final_residual:.3e})")
             else:
                 _log(f"  iter {iteration+1:4d}  |dphi|_max = {residual:.3e} V  "
-                      f"alpha = {alpha:.3e}  {'AA' if use_aa else 'damped'}")
+                      f"PTC dt = {alpha:.3e}")
 
         phi = phi_candidate
 
@@ -1001,7 +1372,34 @@ def solve_self_consistent(
 
         prev_residual = residual
         n_iter = iteration + 1
-        if residual < tol:
+        if bias_coupled:
+            # A small outer-iteration step (|dphi|_max < tol) is only real
+            # evidence of convergence if the coupled Newton-Krylov solve it
+            # came from actually succeeded. However, PTC-direct often stalls at a small
+            # but finite residual (e.g. O(1)) that is physically acceptable. We rely on the 
+            # outer loop |dphi| < tol to judge true convergence.
+            if residual < tol:
+                converged = True
+                break
+
+            # Fail-fast stagnation check (see best_outer_residual's
+            # initialization above for the rationale). Only the inner
+            # solve's own convergence counts as "not converging" -- a
+            # converged inner solve with a slowly-shrinking outer residual
+            # is normal, legitimate progress, not stagnation.
+            if residual < best_outer_residual * _OUTER_STAGNATION_MIN_IMPROVEMENT:
+                best_outer_residual = float(residual)
+                stagnant_outer_iters = 0
+            elif not cd_result.converged:
+                stagnant_outer_iters += 1
+            if stagnant_outer_iters >= _OUTER_STAGNATION_PATIENCE:
+                if verbose:
+                    _log(f"  Outer loop stagnant for {stagnant_outer_iters} iterations "
+                         f"(inner coupled solve not converging, |dphi| stuck near "
+                         f"{best_outer_residual:.3e} V) -- aborting early instead of "
+                         f"continuing to max_iter={max_iter} (nextnano++-style fail-fast).")
+                break
+        elif residual < tol:
             converged = True
             break
 
@@ -1089,6 +1487,32 @@ def solve_self_consistent(
             qcse_dominant_overlap = dom.overlap
             qcse_dominant_pair = (dom.ie, dom.ih)
 
+    # --- Recombination rates [cm^-3 s^-1], one value per grid point ---
+    ni_final = np.sqrt(g.Nc * g.Nv) * np.exp(-(Ec_final - Ev_final) / (2.0 * kBT_eV))
+    rec = compute_recombination_components(n_final, p_final, ni_final)
+
+    # --- Optical gain spectrum (quantum mode, only if a design quantum
+    # well was found -- see physics.gain for the model and its caveats) ---
+    gain_energy_eV = gain_wavelength_nm = gain_spectrum_cm1 = None
+    peak_gain_cm1 = peak_gain_wavelength_nm = None
+    if quantum and E_e is not None and g.qw_window is not None:
+        qw_i0, qw_i1 = g.qw_window
+        Lz_m = max(float(g.x_nm[qw_i1 - 1] - g.x_nm[qw_i0]) * 1e-9, 1e-10)
+        x_Al_well = float(np.mean(g.x_Al[qw_i0:qw_i1]))
+        Efn_well = float(np.mean(Efn[qw_i0:qw_i1]))
+        Efp_well = float(np.mean(Efp[qw_i0:qw_i1]))
+        spectrum = compute_gain_spectrum(
+            E_e, psi_e, g.m_e, hole_bands,
+            {'hh': g.m_hh, 'lh': g.m_lh, 'so': g.m_so},
+            Efn_well, Efp_well, T, dx_cell, Lz_m, x_Al_well,
+        )
+        if spectrum is not None:
+            gain_energy_eV = spectrum.energy_eV
+            gain_wavelength_nm = spectrum.wavelength_nm
+            gain_spectrum_cm1 = spectrum.gain_cm1
+            peak_gain_cm1 = spectrum.peak_gain_cm1
+            peak_gain_wavelength_nm = spectrum.peak_wavelength_nm
+
     return SolverResult(
         x_nm=g.x_nm, x_Al=g.x_Al,
         Ec=Ec_final, Ev=Ev_final, Ei=Ei_final,
@@ -1106,6 +1530,10 @@ def solve_self_consistent(
         qcse_dominant_transition_eV=qcse_dominant_transition_eV,
         qcse_dominant_overlap=qcse_dominant_overlap,
         qcse_dominant_pair=qcse_dominant_pair,
+        R_srh=rec.R_srh, R_rad=rec.R_rad, R_aug=rec.R_aug,
+        gain_energy_eV=gain_energy_eV, gain_wavelength_nm=gain_wavelength_nm,
+        gain_spectrum_cm1=gain_spectrum_cm1, peak_gain_cm1=peak_gain_cm1,
+        peak_gain_wavelength_nm=peak_gain_wavelength_nm,
         surface_charge_markers=surface_charge_markers,
         V_applied=V_applied, V_internal=V_internal, T=T,
         converged=converged, n_iterations=n_iter,

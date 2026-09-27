@@ -98,14 +98,15 @@ class AlGaNDevice:
         self,
         V_applied: float = 0.0,
         quantum: bool = True,
+        method: str = 'newton',
         n_states_e: int = 6,
         n_states_h: int = 6,
-        max_iter: int = 300,
+        max_iter: int = 400,
         tol: float = 1e-6,
         alpha: float = 0.15,
         verbose: bool = False,
         **kwargs
-    ) -> SolverResult:
+    ):
         """
         Run the self-consistent Schrödinger-Poisson solver.
 
@@ -113,6 +114,7 @@ class AlGaNDevice:
         ----------
         V_applied  : applied voltage [V] (positive = forward bias)
         quantum    : use Schrödinger equation for carrier density
+        method     : 'newton' (default) or 'pinn' (PyTorch PINN solver)
         n_states_e : number of electron subbands (quantum mode)
         n_states_h : number of hole subbands (quantum mode)
         max_iter   : max SP iterations
@@ -125,12 +127,27 @@ class AlGaNDevice:
 
         Returns
         -------
-        SolverResult with all band diagram quantities
+        SolverResult or PINNResult with all band diagram quantities
         """
+        if method.lower() == 'pinn':
+            from physics.pinn_solver import solve_pinn
+            pinn_kwargs = {k: v for k, v in kwargs.items() if k in [
+                'n_colloc', 'n_hidden', 'n_neurons', 'n_epochs_adam', 
+                'n_epochs_lbfgs', 'lr_adam', 'lr_lbfgs', 'log_fn',
+                'w_poisson', 'w_cont_n', 'w_cont_p'
+            ]}
+            return solve_pinn(self.grid, V_applied=V_applied, verbose=verbose, **pinn_kwargs)
+
+        # A caller-supplied R_series (e.g. a test isolating boundary-condition
+        # behavior from the series-resistance IR-drop mechanism) wins over
+        # the device's own total_series_resistance -- previously this was
+        # always passed positionally, so any R_series in **kwargs collided
+        # with it (TypeError: got multiple values for keyword argument).
+        kwargs.setdefault('R_series', self.total_series_resistance)
+        from physics.self_consistent import solve_self_consistent
         return solve_self_consistent(
             self.grid,
             V_applied=V_applied,
-            R_series=self.total_series_resistance,
             quantum=quantum,
             n_states_e=n_states_e,
             n_states_h=n_states_h,
@@ -157,82 +174,50 @@ class AlGaNDevice:
         verbose: bool = False,
         alpha: float = 0.3,
         max_iter: int = 200,
-        min_step_fraction: float = 1.0 / 16.0,
         log_fn: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> List[SolverResult]:
         """
-        Solve at multiple bias voltages and return the list of results.
-
-        Each requested voltage is reached by continuation from the last
-        converged voltage. If a step fails to converge, it is bisected and
-        retried (down to `min_step_fraction` of the nominal step) before the
-        requested voltage is given up on and recorded as failed — this
-        replaces having to hand-pick step sizes for devices that are hard
-        to converge at high bias. Voltages that could not be reached are
-        listed in `self.last_sweep_failed_voltages`, and their entry in the
-        returned list carries whatever the last (non-converged) attempt at
-        that target voltage produced (`result.converged is False`).
+        Solve at multiple bias voltages, each one independently from
+        scratch (no continuation/carried-over initial guess between
+        points, no bisection retry) -- see solve_ramped's docstring for
+        why: continuation was found to converge coupled biased solves to
+        spurious, masked-but-"converged" quasi-Fermi splits instead of the
+        correct one. Every point here gets solve()'s own fresh
+        charge-neutral initial guess and PTC-direct's pseudo-time
+        continuation for high-bias robustness instead of bias-value
+        ramping. Voltages that fail to converge are recorded in
+        `self.last_sweep_failed_voltages` (and their entry in the returned
+        list still carries whatever that attempt produced, converged=False)
+        rather than retried.
 
         log_fn : callable(str) used for verbose output instead of the
                  built-in print when given (see solve_self_consistent).
         """
         _log = log_fn if log_fn is not None else print
         voltages = np.linspace(V_start, V_stop, n_steps)
-        nominal_step = abs(voltages[1] - voltages[0]) if n_steps > 1 else abs(V_stop - V_start)
-        min_step = max(nominal_step * min_step_fraction, 1e-6)
 
         results: List[SolverResult] = []
         failed_voltages: List[float] = []
-        phi_init = None
-        Efn_init = None
-        Efp_init = None
-        V_current = float(voltages[0])
 
         for V_target in voltages:
             V_target = float(V_target)
-            step = V_target - V_current
-            phi_i, Efn_i, Efp_i = phi_init, Efn_init, Efp_init
-            res = None
-
-            while True:
-                V_try = V_current + step
-                if verbose:
-                    _log(f"Solving V = {V_try:.3f} V (step = {step:+.3f}) ...")
-                res = self.solve(
-                    V_applied=V_try,
-                    quantum=quantum,
-                    n_states_e=n_states_e,
-                    n_states_h=n_states_h,
-                    max_iter=max_iter,
-                    tol=tol,
-                    alpha=alpha,
-                    phi_init=phi_i,
-                    Efn_init=Efn_i,
-                    Efp_init=Efp_i,
-                    verbose=verbose,
-                    log_fn=log_fn,
-                    cancel_check=cancel_check,
-                )
-
-                if res.converged:
-                    V_current = V_try
-                    phi_i, Efn_i, Efp_i = res.phi, res.Efn, res.Efp
-                    if abs(V_try - V_target) < 1e-9:
-                        break   # reached this sweep target
-                    # Advance toward the target without overshooting, keeping
-                    # the step size that just worked.
-                    remaining = V_target - V_current
-                    step = (1.0 if remaining >= 0 else -1.0) * min(abs(step), abs(remaining))
-                    continue
-
-                # Failed: bisect the step, unless already at the floor.
-                if abs(step) / 2.0 < min_step:
-                    failed_voltages.append(V_target)
-                    break
-                step = step / 2.0
-
-            phi_init, Efn_init, Efp_init = phi_i, Efn_i, Efp_i
+            if verbose:
+                _log(f"Solving V = {V_target:.3f} V (fresh, no continuation) ...")
+            res = self.solve(
+                V_applied=V_target,
+                quantum=quantum,
+                n_states_e=n_states_e,
+                n_states_h=n_states_h,
+                max_iter=max_iter,
+                tol=tol,
+                alpha=alpha,
+                verbose=verbose,
+                log_fn=log_fn,
+                cancel_check=cancel_check,
+            )
+            if not res.converged:
+                failed_voltages.append(V_target)
             results.append(res)
 
         self.last_sweep_failed_voltages = failed_voltages
@@ -242,7 +227,7 @@ class AlGaNDevice:
         return results
 
     # ------------------------------------------------------------------
-    # Single-bias solve, reached by continuation from equilibrium
+    # Single-bias solve, direct (no continuation)
     # ------------------------------------------------------------------
 
     def solve_ramped(
@@ -255,35 +240,36 @@ class AlGaNDevice:
         tol: float = 1e-6,
         alpha: float = 0.15,
         verbose: bool = False,
-        ramp_steps: int = 12,
         log_fn: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        **_ignored,
     ) -> SolverResult:
         """
-        Solve at V_applied by continuation from equilibrium (0V) instead of
-        jumping straight there in one shot, reusing sweep_voltage's
-        ramp+bisection robustness. A one-shot jump to a large bias is
-        exactly what makes the coupled Newton-Krylov solve fail to converge
-        (see physics.coupled_solver's module docstring): JFNK's own Armijo
-        line search only helps if the starting guess is already in its
-        basin of attraction, and an equilibrium-shaped guess usually isn't
-        for V_applied far from 0 -- this is what device.solve() does when
-        called directly with no phi_init, and what sweep_voltage already
-        avoids by advancing one converged step at a time.
+        Solve at V_applied directly, from scratch, in one shot -- kept as a
+        thin alias of solve() (name retained for existing callers) now that
+        bias-value ramping/continuation has been removed. Continuation used
+        to exist because a one-shot jump was thought to be what defeated
+        convergence at high bias; it was actually the opposite problem: the
+        coupled Newton-Krylov solve, when seeded from a carried-forward
+        continuation state, was converging to a spurious nearby fixed point
+        with a genuinely small *scaled* residual that masks an unphysical
+        quasi-Fermi split (confirmed empirically -- a direct one-shot solve
+        at a given V_applied recovers the correct textbook split, while
+        reaching the same V_applied via multi-step ramping did not). See
+        physics.coupled_solver's module docstring and
+        [[bug-quasi-fermi-pinning]]. High-bias robustness now comes from
+        PTC-direct's own pseudo-time continuation (see solve_coupled_dd),
+        not from bias-value ramping.
+
+        `**_ignored` absorbs now-meaningless legacy kwargs (e.g.
+        `ramp_steps`) from existing callers without erroring.
         """
-        if V_applied == 0.0:
-            return self.solve(
-                V_applied=0.0, quantum=quantum,
-                n_states_e=n_states_e, n_states_h=n_states_h,
-                max_iter=max_iter, tol=tol, alpha=alpha, verbose=verbose,
-                log_fn=log_fn, cancel_check=cancel_check,
-            )
-        results = self.sweep_voltage(
-            0.0, V_applied, n_steps=ramp_steps, quantum=quantum,
-            n_states_e=n_states_e, n_states_h=n_states_h, tol=tol, alpha=alpha,
-            max_iter=max_iter, verbose=verbose, log_fn=log_fn, cancel_check=cancel_check,
+        return self.solve(
+            V_applied=V_applied, quantum=quantum,
+            n_states_e=n_states_e, n_states_h=n_states_h,
+            max_iter=max_iter, tol=tol, alpha=alpha, verbose=verbose,
+            log_fn=log_fn, cancel_check=cancel_check,
         )
-        return results[-1]
 
     # ------------------------------------------------------------------
     # Convenience properties

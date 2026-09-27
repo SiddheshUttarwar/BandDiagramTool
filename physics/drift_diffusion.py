@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import diags
 from scipy.sparse.linalg import spsolve
@@ -19,8 +20,92 @@ def bernoulli(x: np.ndarray) -> np.ndarray:
     large = ~small
     x_large = x[large]
     out[large] = x_large / (np.exp(x_large) - 1.0)
-    
+
     return out
+
+
+def dbernoulli(x: np.ndarray) -> np.ndarray:
+    """
+    Analytic derivative B'(x) of the Bernoulli function, for the
+    Scharfetter-Gummel flux stencil's contribution to an *analytic*
+    Jacobian (see physics.coupled_solver's direct solver,
+    [[bug-quasi-fermi-pinning]]).
+
+    B(x) = x/(exp(x)-1); naive differentiation gives B'(x) =
+    [(e-1) - x*e] / (e-1)^2 with e=exp(x), which overflows for large
+    positive x (e^2 exceeds float64 range well before e itself does --
+    exactly the overflow already seen from bernoulli()'s own e=exp(x)
+    call, see physics.self_consistent's known warning). Reformulated to
+    divide through by e first: (1 - 1/e - x) / (e*(1-1/e)^2), stable for
+    x >= 0 since 1/e <= 1 there and nothing larger than e itself appears.
+    For x < 0, uses the identity B(x) = B(-x) - x (already relied on
+    implicitly by callers using bernoulli(dpsi) and bernoulli(-dpsi)
+    together), giving B'(x) = -B'(-x) - 1, which reduces the negative
+    case to the same x>=0-safe formula via y=-x>0.
+    """
+    x = np.asarray(x, dtype=float)
+    out = np.empty_like(x)
+
+    small = np.abs(x) < 1e-4
+    # B(x) ~ 1 - x/2 + x^2/12 - x^4/720  =>  B'(x) ~ -1/2 + x/6 - x^3/180
+    out[small] = -0.5 + x[small] / 6.0 - x[small]**3 / 180.0
+
+    large = ~small
+    x_large = x[large]
+    pos = x_large >= 0.0
+
+    def _dB_nonneg(y: np.ndarray) -> np.ndarray:
+        # y >= 0 here, so e = exp(y) >= 1 and 1/e in (0, 1] -- no overflow.
+        e = np.exp(y)
+        inv_e = 1.0 / e
+        return (1.0 - inv_e - y) / (e * (1.0 - inv_e)**2)
+
+    result = np.empty_like(x_large)
+    if np.any(pos):
+        result[pos] = _dB_nonneg(x_large[pos])
+    if np.any(~pos):
+        y = -x_large[~pos]  # y > 0
+        result[~pos] = -_dB_nonneg(y) - 1.0
+    out[large] = result
+
+    return out
+
+
+@dataclass
+class RecombinationComponents:
+    """Per-grid-point recombination rates [cm^-3 s^-1], split by mechanism."""
+    R_srh: np.ndarray
+    R_rad: np.ndarray
+    R_aug: np.ndarray
+
+    @property
+    def R_total(self) -> np.ndarray:
+        return self.R_srh + self.R_rad + self.R_aug
+
+
+def compute_recombination_components(n: np.ndarray, p: np.ndarray, ni: np.ndarray) -> RecombinationComponents:
+    """
+    SRH, radiative, and Auger recombination rates [cm^-3 s^-1], each
+    computed separately (see compute_recombination for the combined total
+    this replaces internally -- same coefficients, same standard III-Nitride
+    parameters, factored apart so callers that need the breakdown, e.g. for
+    a recombination-mechanism or optical gain plot, don't have to
+    re-derive it).
+    """
+    tau_n = 1e-9  # 1 ns
+    tau_p = 1e-9  # 1 ns
+    B_rad = 1e-11 # cm^3/s
+    C_aug = 1e-30 # cm^6/s
+
+    np2 = n * p
+    ni2 = ni**2
+
+    R_srh = (np2 - ni2) / (tau_p * (n + ni) + tau_n * (p + ni))
+    R_rad = B_rad * (np2 - ni2)
+    R_aug = C_aug * (n + p) * (np2 - ni2)
+
+    return RecombinationComponents(R_srh=R_srh, R_rad=R_rad, R_aug=R_aug)
+
 
 def compute_recombination(n: np.ndarray, p: np.ndarray, ni: np.ndarray) -> np.ndarray:
     """
@@ -28,24 +113,7 @@ def compute_recombination(n: np.ndarray, p: np.ndarray, ni: np.ndarray) -> np.nd
     R = R_SRH + R_rad + R_Auger
     Assumes standard III-Nitride parameters.
     """
-    tau_n = 1e-9  # 1 ns
-    tau_p = 1e-9  # 1 ns
-    B_rad = 1e-11 # cm^3/s
-    C_aug = 1e-30 # cm^6/s
-    
-    np2 = n * p
-    ni2 = ni**2
-    
-    # SRH
-    R_srh = (np2 - ni2) / (tau_p * (n + ni) + tau_n * (p + ni))
-    
-    # Radiative
-    R_rad = B_rad * (np2 - ni2)
-    
-    # Auger
-    R_aug = C_aug * (n + p) * (np2 - ni2)
-    
-    return R_srh + R_rad + R_aug
+    return compute_recombination_components(n, p, ni).R_total
 
 def solve_continuity_electron(
     n: np.ndarray,

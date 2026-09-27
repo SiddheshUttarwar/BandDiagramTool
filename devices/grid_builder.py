@@ -218,6 +218,22 @@ def build_grid(
         physical_layers.append(layer)
         layer_dx_nm = layer.dx_nm if getattr(layer, 'dx_nm', None) else dx_nm
         n_pts = max(2, int(round(layer.thickness_nm / layer_dx_nm)))
+        # Auto-refine a layer that the device's default spacing would leave
+        # with almost no interior resolution (e.g. a 1-2nm quantum well/
+        # barrier at dx_nm=0.5 rounds to just 2 points -- the two boundary
+        # nodes only, zero interior nodes to resolve any band curvature
+        # across the layer at all). Only when the layer didn't request its
+        # own dx_nm (an explicit per-layer choice is respected, never
+        # overridden) -- this is specifically for the common case of a
+        # device built with one global dx_nm where some layers happen to be
+        # much thinner than others, without requiring the user to hand-tune
+        # spacing per layer. Confirmed to be exactly what was starving the
+        # coupled Newton solve of a resolvable Jacobian on ultra-thin
+        # MQW-style layers (see [[bug-quasi-fermi-pinning]]).
+        _MIN_PTS_PER_LAYER = 6
+        if getattr(layer, 'dx_nm', None) is None and n_pts < _MIN_PTS_PER_LAYER:
+            n_pts = _MIN_PTS_PER_LAYER
+            layer_dx_nm = layer.thickness_nm / n_pts
         x_Al_segment = _x_Al_profile(layer, n_pts)
         x_Al_list.append(x_Al_segment)
         ND_list.append(np.full(n_pts, layer.n_doping))
@@ -303,12 +319,29 @@ def build_grid(
 
     # --- Nextnano Nanosmoothing ---
     # Real heterojunctions are not perfectly abrupt. We smooth the composition
-    # profile by 1 grid point to prevent numerical delta-spikes in
-    # polarization charge — the minimum smoothing that still avoids a
-    # literal single-cell discontinuity. Fixed in grid units (not physical
-    # nm), so the physical smoothing width scales with dx_nm: finer grids
-    # give physically sharper junctions, not the same nm-wide ramp resolved
-    # more finely.
+    # profile to prevent numerical delta-spikes in polarization charge --
+    # the minimum smoothing that still avoids a literal single-cell
+    # discontinuity. Pegged to a fixed *physical* width (a representative
+    # MOCVD interdiffusion/interface-roughness scale), not a fixed grid-point
+    # count: a grid-point-fixed sigma (e.g. "1 point", tried first) means
+    # any layer that ends up with a finer local grid spacing -- including
+    # via _MIN_PTS_PER_LAYER's auto-refinement above, not just an explicit
+    # per-layer dx_nm -- gets a *physically* sharper junction purely as a
+    # side effect of its own grid density, not because anyone asked for a
+    # sharper interface there. Confirmed to matter in practice: a device
+    # whose thin layers were auto-refined to more grid points had its
+    # polarization sheet charges concentrated into a much smaller physical
+    # width at those (and only those) interfaces, driving local hole
+    # density to ~10x the effective DOS via genuinely-correct but extreme
+    # Fermi-Dirac degeneracy, which stalled the equilibrium solver. Using
+    # the grid's median spacing to convert a fixed nm-width into a
+    # per-point sigma keeps interface sharpness governed by device physics
+    # (this one width, everywhere) rather than by incidental local grid
+    # density. Not exact on a strongly non-uniform grid (gaussian_filter1d
+    # only understands index spacing, not physical dx per point), but a
+    # correct, bounded improvement over a scale that was flatly wrong
+    # whenever grid density varies layer-to-layer -- which auto-refinement
+    # now makes the common case, not the rare one.
     from scipy.ndimage import gaussian_filter1d
     x_Al = gaussian_filter1d(x_Al_raw, sigma=1.0)
     x_Al = np.clip(x_Al, 0.0, 1.0)

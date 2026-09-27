@@ -117,33 +117,7 @@ class SolveWorker:
             self._out.put(SolveLog(request_id=req.request_id, text=text))
 
         try:
-            device = AlGaNDevice(layers=req.layers, contacts=req.contacts,
-                                  T=req.T, dx_nm=req.dx_nm,
-                                  include_spontaneous_polarization=req.include_spontaneous_polarization)
-            if req.sweep:
-                results = device.sweep_voltage(
-                    req.V_start, req.V_stop, n_steps=req.n_steps,
-                    quantum=req.quantum,
-                    alpha=req.alpha, max_iter=req.max_iter,
-                    verbose=True, log_fn=log_fn,
-                    cancel_check=self._cancel_event.is_set,
-                )
-                self._out.put(SolveDone(request_id=req.request_id, results=results))
-            else:
-                # solve_ramped (not a raw solve()) reaches a nonzero bias by
-                # continuation from equilibrium, same as sweep_voltage does
-                # per-step -- a direct one-shot jump to a large bias is what
-                # made the coupled Newton-Krylov solve fail to converge at
-                # high V_applied (see devices.device.AlGaNDevice.solve_ramped).
-                result = device.solve_ramped(
-                    V_applied=req.V_applied,
-                    quantum=req.quantum, n_states_e=req.n_states_e,
-                    n_states_h=req.n_states_h, max_iter=req.max_iter,
-                    tol=req.tol, alpha=req.alpha,
-                    verbose=True, log_fn=log_fn,
-                    cancel_check=self._cancel_event.is_set,
-                )
-                self._out.put(SolveDone(request_id=req.request_id, result=result))
+            self._run_classical(req, log_fn)
         except SolveCancelled:
             log_fn("Solve cancelled by user.")
             self._out.put(SolveDone(request_id=req.request_id, cancelled=True))
@@ -151,6 +125,35 @@ class SolveWorker:
             self._out.put(SolveDone(request_id=req.request_id, error=str(exc)))
         finally:
             self._start_next()
+
+    def _run_classical(self, req: SolveRequest, log_fn) -> None:
+        device = AlGaNDevice(layers=req.layers, contacts=req.contacts,
+                              T=req.T, dx_nm=req.dx_nm,
+                              include_spontaneous_polarization=req.include_spontaneous_polarization)
+        if req.sweep:
+            results = device.sweep_voltage(
+                req.V_start, req.V_stop, n_steps=req.n_steps,
+                quantum=req.quantum,
+                alpha=req.alpha, max_iter=req.max_iter,
+                verbose=True, log_fn=log_fn,
+                cancel_check=self._cancel_event.is_set,
+            )
+            self._out.put(SolveDone(request_id=req.request_id, results=results))
+        else:
+            # solve_ramped is now a thin alias for a direct, one-shot
+            # solve() at V_applied -- see devices.device.AlGaNDevice.
+            # solve_ramped's docstring for why bias-value ramping was
+            # removed (it was silently converging to a masked, wrong
+            # quasi-Fermi split).
+            result = device.solve_ramped(
+                V_applied=req.V_applied,
+                quantum=req.quantum, n_states_e=req.n_states_e,
+                n_states_h=req.n_states_h, max_iter=req.max_iter,
+                tol=req.tol, alpha=req.alpha,
+                verbose=True, log_fn=log_fn,
+                cancel_check=self._cancel_event.is_set,
+            )
+            self._out.put(SolveDone(request_id=req.request_id, result=result))
 
     def _start_next(self) -> None:
         with self._lock:

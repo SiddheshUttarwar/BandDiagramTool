@@ -8,9 +8,9 @@ together. Handles debounced live re-solve, sweeps, and the File menu
 from __future__ import annotations
 
 import os
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 from typing import Optional
+
+from PyQt6 import QtCore, QtWidgets
 
 from gui.models import DeviceModel
 from gui.layer_stack import LayerStackPanel
@@ -23,12 +23,12 @@ from gui.project_io import save_project, load_project
 _POLL_MS = 80
 
 
-class App:
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        root.title("BandDiagramTool")
-        root.geometry("1440x900")
-        root.minsize(1000, 650)
+class App(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("BandDiagramTool")
+        self.resize(1440, 900)
+        self.setMinimumSize(1000, 650)
 
         self.model = DeviceModel()
         self.worker = SolveWorker()
@@ -39,64 +39,70 @@ class App:
         self._build_layout()
         self.model.add_listener(self._on_model_changed)
 
-        self.root.after(_POLL_MS, self._poll_worker)
+        self._poll_timer = QtCore.QTimer(self)
+        self._poll_timer.timeout.connect(self._poll_worker)
+        self._poll_timer.start(_POLL_MS)
 
     # ------------------------------------------------------------------
     def _build_menu(self):
-        menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label="New", command=self._new_project)
-        file_menu.add_command(label="Open…", command=self._open_project)
-        file_menu.add_command(label="Save", command=self._save_project)
-        file_menu.add_command(label="Save As…", command=self._save_project_as)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit)
-        menubar.add_cascade(label="File", menu=file_menu)
-        self.root.config(menu=menubar)
+        menubar = self.menuBar()
+        menubar.clear()
+        file_menu = menubar.addMenu("File")
+        file_menu.addAction("New", self._new_project)
+        file_menu.addAction("Open…", self._open_project)
+        file_menu.addAction("Save", self._save_project)
+        file_menu.addAction("Save As…", self._save_project_as)
+        file_menu.addSeparator()
+        file_menu.addAction("Exit", self.close)
 
     def _build_layout(self):
-        paned = ttk.Panedwindow(self.root, orient="horizontal")
-        paned.pack(fill="both", expand=True)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.setCentralWidget(splitter)
 
-        left = ttk.Frame(paned, width=340)
-        middle = ttk.Frame(paned, width=300)
-        right = ttk.Frame(paned)
-        paned.add(left, weight=1)
-        paned.add(middle, weight=0)
-        paned.add(right, weight=3)
+        self.stack_panel = LayerStackPanel(self.model, on_select=self._on_select_layer)
+        splitter.addWidget(self.stack_panel)
 
-        self.stack_panel = LayerStackPanel(left, self.model, on_select=self._on_select_layer)
-        self.stack_panel.pack(fill="both", expand=True)
+        middle_scroll = QtWidgets.QScrollArea()
+        middle_scroll.setWidgetResizable(True)
+        middle_inner = QtWidgets.QWidget()
+        middle_layout = QtWidgets.QVBoxLayout(middle_inner)
+        middle_layout.setSpacing(10)
+        middle_layout.setContentsMargins(6, 6, 6, 6)
 
-        # `middle` scrolls if the editor + contacts + settings don't fit.
-        middle_canvas = tk.Canvas(middle, highlightthickness=0)
-        middle_scroll = ttk.Scrollbar(middle, orient="vertical", command=middle_canvas.yview)
-        middle_canvas.configure(yscrollcommand=middle_scroll.set)
-        middle_canvas.pack(side="left", fill="both", expand=True)
-        middle_scroll.pack(side="right", fill="y")
-        middle_inner = ttk.Frame(middle_canvas)
-        middle_inner_id = middle_canvas.create_window((0, 0), window=middle_inner, anchor="nw")
-        middle_inner.bind("<Configure>",
-                           lambda e: middle_canvas.configure(scrollregion=middle_canvas.bbox("all")))
-        middle_canvas.bind("<Configure>",
-                            lambda e: middle_canvas.itemconfigure(middle_inner_id, width=e.width))
+        self.editor_panel = LayerEditorPanel(self.model)
+        middle_layout.addWidget(self.editor_panel)
 
-        self.editor_panel = LayerEditorPanel(middle_inner, self.model)
-        self.editor_panel.pack(fill="x", pady=(6, 6), padx=4)
+        self.contacts_panel = ContactsPanel(self.model)
+        middle_layout.addWidget(self.contacts_panel)
 
-        self.contacts_panel = ContactsPanel(middle_inner, self.model)
-        self.contacts_panel.pack(fill="x", pady=(0, 6), padx=4)
+        self.settings_panel = SettingsPanel(self.model)
+        middle_layout.addWidget(self.settings_panel)
 
-        self.settings_panel = SettingsPanel(middle_inner, self.model)
-        self.settings_panel.pack(fill="x", padx=4)
+        solve_now_btn = QtWidgets.QPushButton("Solve Now")
+        solve_now_btn.setObjectName("primary")
+        solve_now_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        solve_now_btn.clicked.connect(self._request_solve_now)
+        middle_layout.addWidget(solve_now_btn)
 
-        solve_bar = ttk.Frame(middle_inner)
-        solve_bar.pack(fill="x", pady=10, padx=4)
-        ttk.Button(solve_bar, text="Solve Now", command=self._request_solve_now).pack(fill="x")
-        ttk.Button(solve_bar, text="Stop Simulation", command=self._stop_solve).pack(fill="x", pady=(4, 0))
+        stop_btn = QtWidgets.QPushButton("Stop Simulation")
+        stop_btn.setObjectName("danger")
+        stop_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        stop_btn.clicked.connect(self._stop_solve)
+        middle_layout.addWidget(stop_btn)
 
-        self.plot_panel = PlotPanel(right)
-        self.plot_panel.pack(fill="both", expand=True)
+        middle_layout.addStretch(1)
+        middle_scroll.setWidget(middle_inner)
+        splitter.addWidget(middle_scroll)
+
+        self.plot_panel = PlotPanel()
+        splitter.addWidget(self.plot_panel)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 3)
+        splitter.setSizes([340, 380, 780])
+        splitter.setContentsMargins(10, 10, 10, 10)
+        splitter.setHandleWidth(14)
 
     # ------------------------------------------------------------------
     def _on_select_layer(self, index):
@@ -150,7 +156,6 @@ class App:
                 self.plot_panel.append_log(msg.text)
             elif isinstance(msg, SolveDone):
                 self._handle_solve_done(msg)
-        self.root.after(_POLL_MS, self._poll_worker)
 
     def _project_base_name(self) -> str:
         """Basename (no extension) of the currently open/saved project file,
@@ -196,8 +201,9 @@ class App:
         # Simplest robust way to point every panel at a new DeviceModel
         # instance (on New/Open) without each panel needing its own
         # set_model() plumbing: tear down and rebuild the whole layout.
-        for child in self.root.winfo_children():
-            child.destroy()
+        old_central = self.takeCentralWidget()
+        if old_central is not None:
+            old_central.deleteLater()
         self._build_menu()
         self._build_layout()
         self.model.add_listener(self._on_model_changed)
@@ -205,13 +211,14 @@ class App:
         self.plot_panel.set_status("Project loaded." if self._current_project_path else "New project.")
 
     def _open_project(self):
-        path = filedialog.askopenfilename(filetypes=[("BandDiagramTool project", "*.json")])
+        path, _filter = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open", "", "BandDiagramTool project (*.json)")
         if not path:
             return
         try:
             self.model = load_project(path)
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Open", f"Could not load project:\n{exc}")
+            QtWidgets.QMessageBox.critical(self, "Open", f"Could not load project:\n{exc}")
             return
         self._current_project_path = path
         self._rebind_model()
@@ -223,16 +230,22 @@ class App:
         try:
             save_project(self.model, self._current_project_path)
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Save", f"Could not save project:\n{exc}")
+            QtWidgets.QMessageBox.critical(self, "Save", f"Could not save project:\n{exc}")
 
     def _save_project_as(self):
-        path = filedialog.asksaveasfilename(defaultextension=".json",
-                                             filetypes=[("BandDiagramTool project", "*.json")])
+        path, _filter = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save As", "", "BandDiagramTool project (*.json)")
         if not path:
             return
+        if not path.lower().endswith(".json"):
+            path += ".json"
         try:
             save_project(self.model, path)
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Save", f"Could not save project:\n{exc}")
+            QtWidgets.QMessageBox.critical(self, "Save", f"Could not save project:\n{exc}")
             return
         self._current_project_path = path
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._poll_timer.stop()
+        super().closeEvent(event)

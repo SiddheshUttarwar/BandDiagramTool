@@ -279,20 +279,31 @@ def _make_residual_fn(
         # level or transport-relevant density in this device (>=1e15), so
         # this changes nothing about the converged physics -- it only
         # keeps the algebra numerically sane in already-negligible regions.
-        n_cl = np.maximum(electron_density(Ec, Efn, Nc, T), _MIN_CARRIER_DENSITY_CM3)
-        p_cl = np.maximum(hole_density(Ev, Efp, Nv, T), _MIN_CARRIER_DENSITY_CM3)
-
-        # Poisson sees the quantum charge
-        n_pois = n_cl * quantum_gamma_n if quantum_gamma_n is not None else n_cl
-        p_pois = p_cl * quantum_gamma_p if quantum_gamma_p is not None else p_cl
-
-        # Continuity sees the purely classical charge for numerical stability
-        n_cont = n_cl
-        p_cont = p_cl
-
-        # Use purely classical densities for SG flux equations to avoid massive artificial driving fields
-        n = n_cont
-        p = p_cont
+        #
+        # Quantum correction (quantum_gamma_n/p = n_quantum/n_classical,
+        # frozen for this solve by physics.self_consistent from the current
+        # Schrodinger solution -- the standard predictor-corrector
+        # quantum-corrected drift-diffusion scheme): ONE density per carrier,
+        # used identically in Poisson, continuity and recombination. An
+        # earlier version fed the quantum density to Poisson only and kept
+        # continuity classical, which made the two blocks solve for two
+        # different electron populations in the well -- the root cause of
+        # [[bug-quantum-bias-electron-divergence]]. Using gamma*n_cl in the
+        # SG flux is safe: psi_n_eff below picks up kT*ln(gamma) (the
+        # quantum potential) via gamma_n = n/n_boltz, and the SG flux of a
+        # flat-Efn state is exactly zero for ANY gamma profile (including
+        # the step at the quantum-region edge), so no spurious driving
+        # field is introduced.
+        n_cl = electron_density(Ec, Efn, Nc, T)
+        p_cl = hole_density(Ev, Efp, Nv, T)
+        if quantum_gamma_n is not None:
+            n_cl = n_cl * quantum_gamma_n
+        if quantum_gamma_p is not None:
+            p_cl = p_cl * quantum_gamma_p
+        n = np.maximum(n_cl, _MIN_CARRIER_DENSITY_CM3)
+        p = np.maximum(p_cl, _MIN_CARRIER_DENSITY_CM3)
+        n_pois = n
+        p_pois = p
 
         # --- Poisson: F1 = A_pos@phi - rho/eps0 (see physics.poisson /
         # physics.self_consistent._nonlinear_poisson_residual_norm) ---
@@ -524,6 +535,8 @@ def _solve_gummel_adaptive(
     tol: float, maxiter: int,
     log_fn: Optional[Callable[[str], None]] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
+    quantum_gamma_n: Optional[np.ndarray] = None,
+    quantum_gamma_p: Optional[np.ndarray] = None,
 ) -> CoupledResult:
     """
     nextnano++-style decoupled Gummel map: solve the (linear, given phi)
@@ -556,15 +569,23 @@ def _solve_gummel_adaptive(
     phi = phi0.copy()
     phi[0], phi[-1] = phi_left, phi_right
 
+    # Quantum correction factors (see _make_residual_fn): n = gamma_n *
+    # n_classical everywhere, and the SG driving potential gains the
+    # quantum potential kT*ln(gamma) so a flat-Efn state stays current-free.
+    gamma_n = np.ones(N) if quantum_gamma_n is None else np.asarray(quantum_gamma_n, dtype=float)
+    gamma_p = np.ones(N) if quantum_gamma_p is None else np.asarray(quantum_gamma_p, dtype=float)
+    qpot_n = kBT_eV * np.log(gamma_n)
+    qpot_p = kBT_eV * np.log(gamma_p)
+
     Ec = Ec0 - phi
     Ev = Ev0 - phi
-    n = np.maximum(electron_density(Ec, Efn0, Nc, T), _MIN_CARRIER_DENSITY_CM3)
-    p = np.maximum(hole_density(Ev, Efp0, Nv, T), _MIN_CARRIER_DENSITY_CM3)
+    n = np.maximum(gamma_n * electron_density(Ec, Efn0, Nc, T), _MIN_CARRIER_DENSITY_CM3)
+    p = np.maximum(gamma_p * hole_density(Ev, Efp0, Nv, T), _MIN_CARRIER_DENSITY_CM3)
 
-    n_left = float(electron_density(Ec0[0] - phi_left, Efn_left, Nc[0], T))
-    n_right = float(electron_density(Ec0[-1] - phi_right, Efn_right, Nc[-1], T))
-    p_left = float(hole_density(Ev0[0] - phi_left, Efp_left, Nv[0], T))
-    p_right = float(hole_density(Ev0[-1] - phi_right, Efp_right, Nv[-1], T))
+    n_left = float(gamma_n[0] * electron_density(Ec0[0] - phi_left, Efn_left, Nc[0], T))
+    n_right = float(gamma_n[-1] * electron_density(Ec0[-1] - phi_right, Efn_right, Nc[-1], T))
+    p_left = float(gamma_p[0] * hole_density(Ev0[0] - phi_left, Efp_left, Nv[0], T))
+    p_right = float(gamma_p[-1] * hole_density(Ev0[-1] - phi_right, Efp_right, Nv[-1], T))
 
     alpha = _GUMMEL_ALPHA_INIT
     dt_ptc = 1e-1
@@ -587,16 +608,16 @@ def _solve_gummel_adaptive(
         # suspect for the quasi-Fermi masking bug and ruled out, so
         # skipping it here for speed loses no accuracy this codebase
         # doesn't already forgo elsewhere at this level of the model).
-        psi_n_eff = -Ec
-        psi_p_eff = Ev
+        psi_n_eff = -Ec + qpot_n
+        psi_p_eff = Ev + qpot_p
 
         n_trial = solve_continuity_electron(n, psi_n_eff, R, dx, mu_n, T, n_left, n_right)
         p_trial = solve_continuity_hole(p, psi_p_eff, R, dx, mu_p, T, p_left, p_right)
         n_trial = np.maximum(n_trial, _MIN_CARRIER_DENSITY_CM3)
         p_trial = np.maximum(p_trial, _MIN_CARRIER_DENSITY_CM3)
 
-        Efn_trial = Efn_from_n(n_trial, Ec, Nc, T)
-        Efp_trial = Efp_from_p(p_trial, Ev, Nv, T)
+        Efn_trial = Efn_from_n(n_trial / gamma_n, Ec, Nc, T)
+        Efp_trial = Efp_from_p(p_trial / gamma_p, Ev, Nv, T)
         Efn_trial[0], Efn_trial[-1] = Efn_left, Efn_right
         Efp_trial[0], Efp_trial[-1] = Efp_left, Efp_right
 
@@ -641,15 +662,15 @@ def _solve_gummel_adaptive(
                    f"|dphi|_max = {residual:.3e} V")
 
         if residual < tol:
-            Efn = Efn_from_n(n, Ec0 - phi, Nc, T)
-            Efp = Efp_from_p(p, Ev0 - phi, Nv, T)
+            Efn = Efn_from_n(n / gamma_n, Ec0 - phi, Nc, T)
+            Efp = Efp_from_p(p / gamma_p, Ev0 - phi, Nv, T)
             Efn[0], Efn[-1] = Efn_left, Efn_right
             Efp[0], Efp[-1] = Efp_left, Efp_right
             return CoupledResult(phi=phi, Efn=Efn, Efp=Efp, converged=True,
                                   n_iter=n_iter, final_residual=residual)
 
-    Efn = Efn_from_n(n, Ec0 - phi, Nc, T)
-    Efp = Efp_from_p(p, Ev0 - phi, Nv, T)
+    Efn = Efn_from_n(n / gamma_n, Ec0 - phi, Nc, T)
+    Efp = Efp_from_p(p / gamma_p, Ev0 - phi, Nv, T)
     Efn[0], Efn[-1] = Efn_left, Efn_right
     Efp[0], Efp[-1] = Efp_left, Efp_right
     return CoupledResult(phi=phi, Efn=Efn, Efp=Efp, converged=False,
@@ -915,51 +936,49 @@ def solve_coupled_dd(
     # (see _solve_gummel_adaptive) -- roughly 10-100x cheaper per iteration
     # than the monolithic PTC-direct solve below (analytic-matrix linear
     # solves instead of a finite-difference Jacobian assembly + sparse LU
-    # every pseudo-time step). Only attempted when there's no quantum
-    # charge correction to fold into Poisson (quantum_gamma_n/p, which this
-    # fast path doesn't implement) -- self_consistent.py's bias_coupled
-    # branch always passes both as None today, so this is the common case.
+    # every pseudo-time step). Handles the quantum correction factors
+    # (quantum_gamma_n/p) the same way the residual does.
     # A Gummel "converged" result is NEVER trusted on its own -- it's
     # always re-checked against the exact same fully-coupled residual_fn
     # the monolithic solver itself converges against, and only accepted if
     # it independently passes that check. See _solve_gummel_adaptive's
     # docstring for why this gate is non-negotiable.
-    if quantum_gamma_n is None and quantum_gamma_p is None:
-        gummel_result = _solve_gummel_adaptive(
-            phi0, Efn0, Efp0, Ec0, Ev0, Nc, Nv, ND, NA, Ed_x, Ea_x,
-            pol_rho, eps_r, dx, T, kBT_eV, mu_n, mu_p,
-            phi_left, phi_right, Efn_left, Efn_right, Efp_left, Efp_right,
-            surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
-            tol=tol, maxiter=_GUMMEL_MAXITER,
-            log_fn=log_fn, cancel_check=cancel_check,
-        )
-        if gummel_result.converged:
-            state = np.concatenate([gummel_result.phi, gummel_result.Efn, gummel_result.Efp])
-            F = residual_fn(state)
-            verify_residual = float(np.max(np.abs(F))) if np.all(np.isfinite(F)) else np.inf
-            if verify_residual < tol:
-                if log_fn is not None:
-                    log_fn(f"    Gummel-adaptive converged in {gummel_result.n_iter} iters "
-                           f"and passed the fully-coupled residual check "
-                           f"(|F|_max={verify_residual:.3e} < tol={tol:.3e}) -- accepted, "
-                           f"skipping the monolithic PTC-direct solve.")
-                phi = gummel_result.phi.copy()
-                Efn = gummel_result.Efn.copy()
-                Efp = gummel_result.Efp.copy()
-                phi[0], phi[-1] = phi_left, phi_right
-                Efn[0], Efn[-1] = Efn_left, Efn_right
-                Efp[0], Efp[-1] = Efp_left, Efp_right
-                return CoupledResult(phi=phi, Efn=Efn, Efp=Efp, converged=True,
-                                      n_iter=gummel_result.n_iter, final_residual=verify_residual)
-            elif log_fn is not None:
-                log_fn(f"    Gummel-adaptive reported converged in {gummel_result.n_iter} "
-                       f"iters but FAILED the fully-coupled residual check "
-                       f"(|F|_max={verify_residual:.3e} >= tol={tol:.3e}) -- falling back "
-                       f"to the monolithic PTC-direct solver.")
+    gummel_result = _solve_gummel_adaptive(
+        phi0, Efn0, Efp0, Ec0, Ev0, Nc, Nv, ND, NA, Ed_x, Ea_x,
+        pol_rho, eps_r, dx, T, kBT_eV, mu_n, mu_p,
+        phi_left, phi_right, Efn_left, Efn_right, Efp_left, Efp_right,
+        surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
+        tol=tol, maxiter=_GUMMEL_MAXITER,
+        log_fn=log_fn, cancel_check=cancel_check,
+        quantum_gamma_n=quantum_gamma_n, quantum_gamma_p=quantum_gamma_p,
+    )
+    if gummel_result.converged:
+        state = np.concatenate([gummel_result.phi, gummel_result.Efn, gummel_result.Efp])
+        F = residual_fn(state)
+        verify_residual = float(np.max(np.abs(F))) if np.all(np.isfinite(F)) else np.inf
+        if verify_residual < tol:
+            if log_fn is not None:
+                log_fn(f"    Gummel-adaptive converged in {gummel_result.n_iter} iters "
+                       f"and passed the fully-coupled residual check "
+                       f"(|F|_max={verify_residual:.3e} < tol={tol:.3e}) -- accepted, "
+                       f"skipping the monolithic PTC-direct solve.")
+            phi = gummel_result.phi.copy()
+            Efn = gummel_result.Efn.copy()
+            Efp = gummel_result.Efp.copy()
+            phi[0], phi[-1] = phi_left, phi_right
+            Efn[0], Efn[-1] = Efn_left, Efn_right
+            Efp[0], Efp[-1] = Efp_left, Efp_right
+            return CoupledResult(phi=phi, Efn=Efn, Efp=Efp, converged=True,
+                                  n_iter=gummel_result.n_iter, final_residual=verify_residual)
         elif log_fn is not None:
-            log_fn(f"    Gummel-adaptive did not converge in {gummel_result.n_iter} iters "
-                   f"(|dphi|={gummel_result.final_residual:.3e}) -- falling back to the "
-                   f"monolithic PTC-direct solver.")
+            log_fn(f"    Gummel-adaptive reported converged in {gummel_result.n_iter} "
+                   f"iters but FAILED the fully-coupled residual check "
+                   f"(|F|_max={verify_residual:.3e} >= tol={tol:.3e}) -- falling back "
+                   f"to the monolithic PTC-direct solver.")
+    elif log_fn is not None:
+        log_fn(f"    Gummel-adaptive did not converge in {gummel_result.n_iter} iters "
+               f"(|dphi|={gummel_result.final_residual:.3e}) -- falling back to the "
+               f"monolithic PTC-direct solver.")
 
     state0 = np.concatenate([phi0, Efn0, Efp0])
     state0[0] = phi_left; state0[N - 1] = phi_right

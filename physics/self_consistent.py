@@ -241,7 +241,8 @@ def _detect_quantum_region(g: GridData, margin_nm: float = 10.0) -> tuple[int, i
 
 
 def _solve_confined_states(V_eV_full: np.ndarray, m_full: np.ndarray, dx,
-                            n_states: int, i0: int, i1: int, N: int):
+                            n_states: int, i0: int, i1: int, N: int,
+                            E_cut: Optional[float] = None):
     """
     Solve the Schrödinger equation restricted to grid indices [i0, i1) and
     embed the resulting wavefunctions into full-length (N-point),
@@ -253,9 +254,23 @@ def _solve_confined_states(V_eV_full: np.ndarray, m_full: np.ndarray, dx,
     down to the subdomain's own edges (length i1-i0-1) before being handed
     to solve_schrodinger -- passing the full-device array unsliced would
     both be the wrong length and describe the wrong edges.
+
+    E_cut : if given, n_states is only a minimum -- it is doubled until the
+    highest returned state lies above E_cut (or the region runs out of
+    states). A fixed state count silently drops the charge of every well
+    whose states rank past it: on a 9-well MQW with n_states=6, the last
+    wells got NO quantum electrons at all (gamma pinned at 1e-8), the
+    potential there collapsed by ~1 V, and the next Schrodinger solve moved
+    all states into those wells instead -- the sloshing behind
+    [[bug-quantum-bias-electron-divergence]].
     """
     dx_sub = dx if np.ndim(dx) == 0 else np.asarray(dx)[i0:i1 - 1]
-    E, psi_sub = solve_schrodinger(V_eV_full[i0:i1], m_full[i0:i1], dx_sub, n_states=n_states)
+    n_max = i1 - i0 - 2
+    while True:
+        E, psi_sub = solve_schrodinger(V_eV_full[i0:i1], m_full[i0:i1], dx_sub, n_states=n_states)
+        if E_cut is None or len(E) == 0 or E[-1] >= E_cut or n_states >= n_max:
+            break
+        n_states = min(2 * n_states, n_max)
     psi_full = np.zeros((len(E), N))
     psi_full[:, i0:i1] = psi_sub
     return E, psi_full
@@ -308,6 +323,33 @@ def _blended_density(quantum_density: np.ndarray, classical_density: np.ndarray,
 _HOLE_BAND_MASS_ATTR = {'hh': 'm_hh', 'lh': 'm_lh', 'so': 'm_so'}
 
 
+# Quantum correction factor bounds: gamma = n_quantum/n_classical can be
+# enormous/tiny where both densities are negligible (deep depletion, or
+# above the highest computed subband); clipping keeps kT*ln(gamma) (the
+# quantum potential it adds to the SG flux) within ~+-0.5 eV there without
+# affecting any node that actually carries charge.
+_QUANTUM_GAMMA_MIN = 1e-8
+_QUANTUM_GAMMA_MAX = 1e8
+_QUANTUM_GAMMA_BETA_INIT = 0.5
+_SUBBAND_CUTOFF_KT = 10.0
+# Quantum bias convergence also requires |ln(gamma_new/gamma_used)| below
+# this (i.e. quantum and modelled densities agree to ~1%) wherever the
+# density exceeds _GAMMA_MISMATCH_MIN_DENSITY [cm^-3].
+_GAMMA_MISMATCH_TOL = 1e-2
+_GAMMA_MISMATCH_MIN_DENSITY = 1e10
+_QUANTUM_GAMMA_BETA_MIN = 0.02
+
+
+def _quantum_gamma(quantum_blended: np.ndarray, classical: np.ndarray,
+                   region_mask: np.ndarray) -> np.ndarray:
+    """Per-node n_quantum/n_classical inside the quantum region, exactly 1
+    outside it -- the correction factor physics.coupled_solver folds into
+    its residual (quantum_gamma_n/p)."""
+    ratio = quantum_blended / np.maximum(classical, 1e-300)
+    gamma = np.clip(ratio, _QUANTUM_GAMMA_MIN, _QUANTUM_GAMMA_MAX)
+    return np.where(region_mask, gamma, 1.0)
+
+
 def _hole_band_edges(Ev: np.ndarray, g: GridData) -> dict:
     """HH/LH/SO valence band-edge profiles [eV] at the current phi, on the
     same absolute scale as Ev = g.Ev0 - phi. LH/SO offsets are static (see
@@ -317,7 +359,7 @@ def _hole_band_edges(Ev: np.ndarray, g: GridData) -> dict:
 
 
 def _solve_hole_bands(Ev: np.ndarray, g: GridData, dx, q_i0: int, q_i1: int,
-                       n_states_h: int) -> dict:
+                       n_states_h: int, E_cut: Optional[float] = None) -> dict:
     """Solve HH/LH/SO confined states as three independent single-band
     Schrodinger problems sharing the same quantum-region window, each with
     its own band edge and effective mass. Returns {'hh'/'lh'/'so': (E, psi)}."""
@@ -326,7 +368,7 @@ def _solve_hole_bands(Ev: np.ndarray, g: GridData, dx, q_i0: int, q_i1: int,
     for name, Ev_band in edges.items():
         m_band = getattr(g, _HOLE_BAND_MASS_ATTR[name])
         V_hole = hole_potential(Ev_band)
-        bands[name] = _solve_confined_states(V_hole, m_band, dx, n_states_h, q_i0, q_i1, g.N)
+        bands[name] = _solve_confined_states(V_hole, m_band, dx, n_states_h, q_i0, q_i1, g.N, E_cut)
     return bands
 
 
@@ -905,6 +947,25 @@ def solve_self_consistent(
             verbose, log_fn, cancel_check,
         )
 
+    if bias_coupled and quantum and phi_init is None and Efn_init is None and Efp_init is None:
+        # Quantum bias solves warm-start from the CLASSICAL solution at the
+        # same bias (fast and robust -- see [[bug-efn-efp-not-splitting]]):
+        # the first Schrodinger solve then sees a physically biased
+        # potential instead of the equilibrium-plus-linear-ramp guess, which
+        # was confirmed to make even the first classical inner solve fail
+        # and to seed gamma with values pinned at its clip bounds. Falls
+        # back to the usual cold start if the classical solve fails.
+        classical = solve_self_consistent(
+            grid, V_applied=V_applied, R_series=0.0, quantum=False,
+            max_iter=max_iter, tol=tol, verbose=False,
+            log_fn=log_fn, cancel_check=cancel_check,
+        )
+        if classical.converged:
+            phi_init, Efn_init, Efp_init = classical.phi, classical.Efn, classical.Efp
+            if verbose:
+                _log("  Quantum bias solve: warm-started from the converged classical solution.")
+
+    warm_started = phi_init is not None and Efn_init is not None
     if bias_coupled and phi_init is None:
         phi_init = _get_equilibrium_phi_init(
             grid, quantum, n_states_e, n_states_h, log_fn, cancel_check)
@@ -922,8 +983,10 @@ def solve_self_consistent(
     # --- Electrostatics ---
     if phi_init is not None:
         phi = phi_init.copy()
-        # MUST update boundaries to current V_applied!
-        phi += linear_bias_drop
+        # MUST update boundaries to current V_applied! (A warm start from a
+        # biased solution at this same V_applied already includes it.)
+        if not warm_started:
+            phi += linear_bias_drop
         phi[0] = phi_left
         phi[-1] = phi_right
     else:
@@ -1142,6 +1205,17 @@ def solve_self_consistent(
     best_outer_residual = np.inf
     stagnant_outer_iters = 0
 
+    # Quantum bias solves: log-space under-relaxation of the correction
+    # factors between outer iterations (see _quantum_gamma's caller below).
+    # Undamped, the Schrodinger <-> transport outer loop was confirmed to
+    # fall into a 2-cycle on the UV-LED MQW (|dphi| ~4 V alternating, gamma
+    # flipping between two states) -- classic Schrodinger-Poisson charge
+    # sloshing. beta adapts like the rest of this module: grows on an
+    # improving outer step, halves when |dphi| gets worse.
+    log_gamma_n_prev = log_gamma_p_prev = None
+    gamma_beta = _QUANTUM_GAMMA_BETA_INIT
+    gamma_mismatch = np.inf
+
     for iteration in range(max_iter):
         if cancel_check is not None and cancel_check():
             raise SolveCancelled("Solve cancelled by user")
@@ -1152,7 +1226,13 @@ def solve_self_consistent(
 
         # b/c. Carrier densities
         if quantum:
-            E_e, psi_e = _solve_confined_states(Ec, g.m_e, g.dx, n_states_e, q_i0, q_i1, g.N)
+            # Energy cutoff _SUBBAND_CUTOFF_KT kT past the quasi-Fermi level
+            # (in the hole solver's inverted -Ev frame for holes): states
+            # beyond it carry negligible charge, states below it must all be
+            # present -- see _solve_confined_states.
+            E_cut_e = float(np.max(Efn[region_mask])) + _SUBBAND_CUTOFF_KT * kBT_eV
+            E_cut_h = float(-np.min(Efp[region_mask])) + _SUBBAND_CUTOFF_KT * kBT_eV
+            E_e, psi_e = _solve_confined_states(Ec, g.m_e, g.dx, n_states_e, q_i0, q_i1, g.N, E_cut_e)
             n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T),
                                   electron_density(Ec, Efn, g.Nc, T), region_mask)
 
@@ -1160,7 +1240,7 @@ def solve_self_consistent(
             # see _solve_hole_bands and physics.materials.algan.
             # AlGaNParams.valence_band_structure. E_h/psi_h stays the HH band
             # for backward compatibility (QCSE optics, existing plots).
-            hole_bands = _solve_hole_bands(Ev, g, g.dx, q_i0, q_i1, n_states_h)
+            hole_bands = _solve_hole_bands(Ev, g, g.dx, q_i0, q_i1, n_states_h, E_cut_h)
             E_h, psi_h = hole_bands['hh']
             E_h_lh, psi_h_lh = hole_bands['lh']
             E_h_so, psi_h_so = hole_bands['so']
@@ -1192,15 +1272,61 @@ def solve_self_consistent(
             mu_n_avg = float(np.mean(300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al))
             mu_p_avg = float(np.mean(10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al))
 
-            quantum_gamma_n = None
-            quantum_gamma_p = None
+            # Quantum-corrected drift-diffusion (predictor-corrector): the
+            # Schrodinger solution from step b is frozen into per-node
+            # correction factors gamma = n_quantum / n_classical (1 outside
+            # the quantum region), and the inner coupled solve uses
+            # gamma * n_classical(phi, Efn) as THE carrier density in
+            # Poisson, continuity and recombination alike. The classical
+            # exp((Efn-Ec)/kT) response to phi/Efn is an excellent predictor
+            # of how the subband charge responds (subbands ride along with
+            # Ec), so the outer loop only has to correct gamma's slow
+            # residual dependence on well shape. Replaces the old scheme
+            # (classical inner solve + a damped post-hoc quantum Poisson
+            # patch on phi), which solved for two different electron
+            # populations in the well and never reconciled them -- see
+            # [[bug-quantum-bias-electron-divergence]].
+            # The first outer iteration stays classical: its Schrodinger
+            # solve saw the bias-less initial-guess potential, and a gamma
+            # built from that (confirmed: pinned at the clip bounds across
+            # most of the region) throws the inner solve far from the
+            # biased solution. The classical bias solution is fast and
+            # robust, and a physically sensible potential for the first
+            # real Schrodinger solve.
+            quantum_gamma_n = quantum_gamma_p = None
+            if quantum and (iteration > 0 or warm_started):
+                n_cl_now = electron_density(Ec, Efn, g.Nc, T)
+                p_cl_now = hole_density(Ev, Efp, g.Nv, T)
+                lg_n = np.log(_quantum_gamma(n, n_cl_now, region_mask))
+                lg_p = np.log(_quantum_gamma(p, p_cl_now, region_mask))
+                if log_gamma_n_prev is not None:
+                    # Self-consistency of the quantum correction itself: how
+                    # far the gamma used last solve is from the one the
+                    # fresh Schrodinger solution implies, in kT units, at
+                    # nodes carrying non-negligible charge. Needed alongside
+                    # |dphi| because under-relaxation can make |dphi| small
+                    # just by shrinking gamma_beta.
+                    carries_n = n_cl_now * np.exp(log_gamma_n_prev) > _GAMMA_MISMATCH_MIN_DENSITY
+                    carries_p = p_cl_now * np.exp(log_gamma_p_prev) > _GAMMA_MISMATCH_MIN_DENSITY
+                    gamma_mismatch = max(
+                        float(np.max(np.abs(lg_n - log_gamma_n_prev)[carries_n], initial=0.0)),
+                        float(np.max(np.abs(lg_p - log_gamma_p_prev)[carries_p], initial=0.0)))
+                    if residual_history and len(residual_history) >= 2                             and residual_history[-1] > residual_history[-2]:
+                        gamma_beta = max(gamma_beta * 0.5, _QUANTUM_GAMMA_BETA_MIN)
+                    else:
+                        gamma_beta = min(gamma_beta * 1.2, 1.0)
+                    lg_n = log_gamma_n_prev + gamma_beta * (lg_n - log_gamma_n_prev)
+                    lg_p = log_gamma_p_prev + gamma_beta * (lg_p - log_gamma_p_prev)
+                log_gamma_n_prev, log_gamma_p_prev = lg_n, lg_p
+                quantum_gamma_n = np.exp(lg_n)
+                quantum_gamma_p = np.exp(lg_p)
 
             cd_result = solve_coupled_dd(
                 phi, Efn, Efp, g.Ec0, g.Ev0, g.Nc, g.Nv, g.ND, g.NA, Ed_x, Ea_x,
                 g.pol_rho, g.eps_r, g.dx, T, mu_n_avg, mu_p_avg,
                 phi_left, phi_right, 0.0, -V_internal, 0.0, -V_internal,
                 surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
-                quantum_gamma_n=None, quantum_gamma_p=None,
+                quantum_gamma_n=quantum_gamma_n, quantum_gamma_p=quantum_gamma_p,
                 tol=1e-3, maxiter=40,
                 log_fn=(_log if verbose else None),
                 cancel_check=cancel_check,
@@ -1208,52 +1334,6 @@ def solve_self_consistent(
             phi_candidate = cd_result.phi
             Efn = cd_result.Efn
             Efp = cd_result.Efp
-
-            if quantum and iteration > 0:
-                # The inner solver ran classically. Now we calculate the exact quantum charge
-                # using the NEW quasi-Fermi levels and the OLD wavefunctions.
-                n_new_q = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T),
-                                           electron_density(g.Ec0 - phi_candidate, Efn, g.Nc, T), region_mask)
-                p_new_q = _blended_density(_total_quantum_hole_density(hole_bands, Efp, T, g),
-                                           hole_density(g.Ev0 - phi_candidate, Efp, g.Nv, T), region_mask)
-                                           
-                dn_dphi = -_q / kBT_eV * n_new_q
-                dp_dphi = -_q / kBT_eV * p_new_q
-                
-                dNd_dphi = np.zeros_like(phi)
-                dNa_dphi = np.zeros_like(phi)
-                
-                # Single PTC-damped Poisson Newton step to incorporate quantum charge into phi
-                phi_q = solve_poisson_newton_ptc(
-                    phi_candidate, g.eps_r, n_new_q, p_new_q, g.ND, g.NA, dNd_dphi, dNa_dphi,
-                    g.pol_rho, g.dx, phi_left, phi_right, T, dt=0.5
-                )
-                
-                # Decaying damping to prevent oscillations between classical DD and quantum Poisson.
-                # No floor: a floored (non-vanishing) damping applies a
-                # permanent, non-zero perturbation to phi every single
-                # outer iteration forever, which structurally prevents the
-                # outer loop from ever reaching a tight tolerance -- it can
-                # only crawl asymptotically close, never actually arrive.
-                # Confirmed empirically (2026-09-27): with the old
-                # max(0.01, ...) floor, a quantum=True bias solve's outer
-                # |dphi|_max got stuck decaying by ~1%/iteration forever
-                # (e.g. 4.66e-5 at iteration 167, still only 3.51e-5 by
-                # iteration 195), never crossing tol=1e-6 even after
-                # hundreds of iterations, each one also wastefully
-                # re-attempting the Gummel fast path (which reliably
-                # diverges once this close to converged on this device)
-                # because the permanent perturbation kept the incoming
-                # state just far enough from the true fixed point for the
-                # cheap already-converged check in solve_coupled_dd to
-                # never trigger. Letting damping actually vanish (1/iteration,
-                # no floor) preserves the original intent (heavy damping
-                # early, to prevent oscillation) while letting it actually
-                # go to zero for large iteration counts, so the fixed
-                # point is a true fixed point, not an eternally-perturbed
-                # near-miss.
-                damping = 0.5 / iteration
-                phi_candidate = phi + damping * (phi_q - phi)
 
             # Reuses alpha_history's slot to record the NK iteration count
             # for this step (not a damping factor -- there isn't one here).
@@ -1418,7 +1498,9 @@ def solve_self_consistent(
             if bias_coupled:
                 _log(f"  outer iter {iteration+1:4d}  |dphi|_max = {residual:.3e} V  "
                       f"coupled-NK {'converged' if cd_result.converged else 'DID NOT CONVERGE'} "
-                      f"in {cd_result.n_iter} iters (residual={cd_result.final_residual:.3e})")
+                      f"in {cd_result.n_iter} iters (residual={cd_result.final_residual:.3e})"
+                      + (f"  |dln(gamma)|={gamma_mismatch:.2e} beta={gamma_beta:.2f}"
+                         if quantum else ""))
             else:
                 _log(f"  iter {iteration+1:4d}  |dphi|_max = {residual:.3e} V  "
                       f"PTC dt = {alpha:.3e}")
@@ -1437,7 +1519,7 @@ def solve_self_consistent(
             # came from actually succeeded. However, PTC-direct often stalls at a small
             # but finite residual (e.g. O(1)) that is physically acceptable. We rely on the 
             # outer loop |dphi| < tol to judge true convergence.
-            if residual < tol:
+            if residual < tol and (not quantum or gamma_mismatch < _GAMMA_MISMATCH_TOL):
                 converged = True
                 break
 

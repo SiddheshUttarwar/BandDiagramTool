@@ -44,7 +44,8 @@ plt.style.use(['science', 'no-latex'])
 
 _COLORS = {
     'Ec':   '#1f77b4',   # blue
-    'Ev':   '#2ca02c',   # green (Ev == Ev_hh, the heavy-hole edge)
+    'Ev':   '#2ca02c',   # green (Ev = topmost valence band edge)
+    'Ev_hh': '#17becf',  # cyan -- heavy-hole edge (== Ev in GaN-rich layers)
     'Ev_lh': '#9467bd',  # purple -- distinct from Ev/Ev_so, not a green shade
     'Ev_so': '#8c564b',  # brown -- distinct from Ev/Ev_lh, not a green shade
     'Efn':  '#d62728',   # red
@@ -168,8 +169,8 @@ def plot_band_diagram(
     title: str | None = None,
 ) -> plt.Axes:
     """
-    Panel 1: Ec, Ev (HH), Efn, Efp, Ei, optional vacuum level, and (if
-    show_valence_bands) the LH/SO valence band edges alongside Ev -- the
+    Panel 1: Ec, Ev (topmost valence band), Efn, Efp, Ei, optional vacuum
+    level, and (if show_valence_bands) the HH/LH/SO valence band edges -- the
     decoupled 3-band effective-mass model (see physics.materials.algan.
     AlGaNParams.valence_band_structure; physics.self_consistent solves each
     band's confined states independently, no HH-LH-SO mixing).
@@ -183,6 +184,7 @@ def plot_band_diagram(
     x = r.x_nm
     Ev_lh = getattr(r, 'Ev_lh', None)
     Ev_so = getattr(r, 'Ev_so', None)
+    Ev_hh = getattr(r, 'Ev_hh', None)
     have_valence_bands = show_valence_bands and Ev_lh is not None and Ev_so is not None
 
     y_min = float(np.min(r.Ev)) - 0.3
@@ -197,7 +199,8 @@ def plot_band_diagram(
     E_vac = None
     if show_vacuum:
         from physics.materials.algan import get_AlGaN_params
-        chi_arr = np.array([get_AlGaN_params(xi).chi for xi in r.x_Al])
+        chi_arr = (np.asarray(r.chi) if getattr(r, 'chi', None) is not None
+                   else np.array([get_AlGaN_params(xi).chi for xi in r.x_Al]))
         E_vac = r.Ec + chi_arr
         y_max = max(y_max, float(np.max(E_vac)) + 0.2)
 
@@ -209,8 +212,10 @@ def plot_band_diagram(
 
     ax.plot(x, r.Ec, color=_COLORS['Ec'],  lw=1.3, label='$E_c$')
     ax.plot(x, r.Ev, color=_COLORS['Ev'],  lw=1.3,
-            label='$E_v$ (HH)' if have_valence_bands else '$E_v$')
+            label='$E_v$ (top)' if have_valence_bands else '$E_v$')
     if have_valence_bands:
+        if Ev_hh is not None:
+            ax.plot(x, Ev_hh, color=_COLORS['Ev_hh'], lw=1.1, label='$E_v$ (HH)')
         ax.plot(x, Ev_lh, color=_COLORS['Ev_lh'], lw=1.1, label='$E_v$ (LH)')
         ax.plot(x, Ev_so, color=_COLORS['Ev_so'], lw=1.1, label='$E_v$ (SO)')
     ax.plot(x, r.Ei, color=_COLORS['Ei'],  lw=1.0, ls=':', label='$E_i$')
@@ -252,7 +257,12 @@ def plot_band_diagram(
         # surfacing both here instead of just V_applied is what makes a
         # collapsed V_internal visible instead of a diagram that's
         # mysteriously flat despite being labeled at the requested bias.
-        if abs(V_internal - r.V_applied) > 0.01:
+        # A NON-converged result can also differ: the drift-diffusion
+        # ramp stalled and V_internal is the bias the shown state reached.
+        if abs(V_internal - r.V_applied) > 0.01 and not r.converged:
+            label = (f'Band Diagram  (NOT CONVERGED at V$_{{applied}}$ = {r.V_applied:.2f} V; '
+                      f'state shown is at V = {V_internal:.2f} V, T = {r.T:.0f} K)')
+        elif abs(V_internal - r.V_applied) > 0.01:
             label = (f'Band Diagram  (V$_{{applied}}$ = {r.V_applied:.2f} V, '
                       f'V$_{{internal}}$ = {V_internal:.2f} V -- IR drop across '
                       f'R$_{{series}}$, T = {r.T:.0f} K)')

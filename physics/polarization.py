@@ -4,7 +4,7 @@ Strain and polarization physics for wurtzite AlGaN on a c-plane substrate.
 Implements:
   - Biaxial strain from lattice mismatch (pseudomorphic growth)
   - Piezoelectric polarization Ppz (Bernardini et al. 1997)
-  - Spontaneous polarization Psp with temperature correction (pyroelectric effect)
+  - Spontaneous polarization Psp (Ambacher 2002) with temperature correction (pyroelectric effect)
   - Total polarization divergence → volume charge density
   - Interface sheet charges at abrupt composition steps
   - Quasi-electric field from composition gradient
@@ -21,8 +21,8 @@ References:
 """
 
 import numpy as np
-from physics.materials.algan import get_AlGaN_params
-from physics.grid_utils import central_difference
+from physics.materials.algan import get_AlGaN_params, spontaneous_polarization
+from physics.grid_utils import central_difference, node_spacings
 
 
 # Pyroelectric coefficients [C/(m²·K)], PRB 93:081205 (2016)
@@ -44,7 +44,7 @@ def compute_Psp(x_Al: np.ndarray, T: float = 300.0) -> np.ndarray:
     Psp  : array [C/m²], negative values (Ga-face convention)
     """
     x = np.asarray(x_Al, dtype=float)
-    Psp300 = x * (-0.081) + (1.0 - x) * (-0.034) - 0.021 * x * (1.0 - x)
+    Psp300 = spontaneous_polarization(x)   # Ambacher 2002 (single source of truth)
     p_x    = x * _P_PYRO_AlN + (1.0 - x) * _P_PYRO_GaN
     return Psp300 + (T - 300.0) * p_x
 
@@ -146,7 +146,20 @@ def compute_pol_charge(P_total: np.ndarray,
               (positive = donor-like, negative = acceptor-like)
     """
     P = np.asarray(P_total, dtype=float)
-    return -central_difference(P, dx)
+    # Conservative (finite-volume) divergence: rho_i * cell_width_i =
+    # -(P_{i+1} - P_{i-1})/2, which telescopes so the integrated charge is
+    # exactly the polarization step on ANY grid. The non-uniform 3-point
+    # central_difference is second-order for smooth P but not conservative:
+    # at a step where the spacing changes h1 -> h2 it scales the sheet
+    # charge by h1/h2 (e.g. 4x at a 0.2 -> 0.05 nm per-layer dx_nm change),
+    # which made 2DEG densities depend on per-layer grid spacing.
+    N = len(P)
+    _h1, _h2, cell_width, edges = node_spacings(dx, N)
+    rho = np.empty(N)
+    rho[1:-1] = -0.5 * (P[2:] - P[:-2]) / cell_width[1:-1]
+    rho[0] = -0.5 * (P[1] - P[0]) / cell_width[0]
+    rho[-1] = -0.5 * (P[-1] - P[-2]) / cell_width[-1]
+    return rho
 
 
 def compute_quasi_field(x_Al: np.ndarray,

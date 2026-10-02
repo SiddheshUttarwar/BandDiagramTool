@@ -129,6 +129,9 @@ class Contact:
     position: str       # 'bottom' (substrate side) | 'top' (surface side)
     contact_type: str   # 'ohmic' | 'schottky'
     metal: str          # e.g. 'Ni', 'Ti', 'Au', 'Al', 'Pt'
+    barrier_eV: Optional[float] = None  # Schottky only: explicit barrier
+        # height Ec - Ef at the metal [eV] (measured / surface-pinned value);
+        # None = Schottky-Mott estimate work_function(metal) - chi.
 
 
 # Union type alias

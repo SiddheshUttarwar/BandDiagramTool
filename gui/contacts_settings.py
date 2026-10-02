@@ -42,15 +42,32 @@ class ContactsPanel(QtWidgets.QGroupBox):
         metal_combo.addItems(_METALS)
         metal_combo.setCurrentText(contact.metal)
 
+        # Explicit Schottky barrier height (Ec - Ef at the metal); 0 shows as
+        # "auto" = Schottky-Mott estimate work_function - chi.
+        barrier_spin = QtWidgets.QDoubleSpinBox()
+        barrier_spin.setRange(0.0, 6.0)
+        barrier_spin.setDecimals(2)
+        barrier_spin.setSingleStep(0.05)
+        barrier_spin.setSuffix(" eV")
+        barrier_spin.setSpecialValueText("auto (Schottky-Mott)")
+        barrier_spin.setToolTip("Schottky barrier height. 'auto' = metal work function - electron affinity.")
+        barrier_spin.setValue(contact.barrier_eV if getattr(contact, 'barrier_eV', None) else 0.0)
+        barrier_spin.setEnabled(contact.contact_type == 'schottky')
+
         def apply(_=None):
+            barrier_spin.setEnabled(type_combo.currentText() == 'schottky')
+            barrier = barrier_spin.value()
             setter(Contact(position=contact.position, contact_type=type_combo.currentText(),
-                            metal=metal_combo.currentText()))
+                            metal=metal_combo.currentText(),
+                            barrier_eV=barrier if barrier > 0.0 else None))
 
         type_combo.currentTextChanged.connect(apply)
         metal_combo.currentTextChanged.connect(apply)
+        barrier_spin.valueChanged.connect(apply)
 
         row.addWidget(type_combo)
         row.addWidget(metal_combo)
+        row.addWidget(barrier_spin)
         row.addStretch(1)
         return row
 
@@ -72,6 +89,16 @@ class SettingsPanel(QtWidgets.QGroupBox):
         quantum_cb.setChecked(s.quantum)
         quantum_cb.toggled.connect(lambda v: self._set("quantum", v))
         layout.addWidget(quantum_cb)
+
+        flat_qfl_cb = QtWidgets.QCheckBox("Flat quasi-Fermi levels (Efn − Efp = qV, no current)")
+        flat_qfl_cb.setToolTip(
+            "Hold Efn at the n-contact level and Efp at the p-contact level at every "
+            "interior grid point (split = qV everywhere except the contacts) and solve "
+            "only (Schrödinger-)Poisson. Fast and robust for band diagrams / QCSE under "
+            "bias; gives no current information.")
+        flat_qfl_cb.setChecked(s.flat_qfl)
+        flat_qfl_cb.toggled.connect(lambda v: self._set("flat_qfl", v))
+        layout.addWidget(flat_qfl_cb)
 
         psp_cb = QtWidgets.QCheckBox("Add spontaneous polarization in band diagram calculations")
         psp_cb.setChecked(s.include_spontaneous_polarization)

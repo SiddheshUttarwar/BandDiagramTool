@@ -1,0 +1,96 @@
+global{
+    simulate1D{}
+    crystal_wz{ x_hkl = [0, 0, 1] y_hkl = [1, 0, 0] }
+    substrate{ name = "GaN" }
+    temperature = 300
+}
+impurities{
+    donor{ name = "nd0" energy = 0.018 degeneracy = 2 }
+    acceptor{ name = "na1" energy = 0.17 degeneracy = 4 }
+    charge{ name = "qpos" type = positive }
+    charge{ name = "qneg" type = negative }
+}
+contacts{
+    ohmic{ name = "bottom" bias = 0.0 }
+    ohmic{ name = "top" bias = 0.0 }
+}
+structure{
+    region{ binary{ name = "GaN" } line{ x = [0, 200] } doping{ constant{ name = "nd0" conc = 1e+18 } } }
+    region{ binary{ name = "GaN" } line{ x = [200, 400] } doping{ constant{ name = "na1" conc = 1e+19 } } }
+    region{ contact{ name = "bottom" } line{ x = [0, 0.5] } }
+    region{ contact{ name = "top" } line{ x = [399.5, 400] } }
+}
+grid{
+    xgrid{
+        line{ pos = 0 spacing = 0.5 }
+        line{ pos = 0.5 spacing = 0.65 }
+        line{ pos = 1.15 spacing = 0.845 }
+        line{ pos = 1.995 spacing = 1.0985 }
+        line{ pos = 3.0935 spacing = 1.42805 }
+        line{ pos = 4.52155 spacing = 1.85647 }
+        line{ pos = 6.37802 spacing = 2.4134 }
+        line{ pos = 8.79142 spacing = 3.13743 }
+        line{ pos = 11.9288 spacing = 4.07865 }
+        line{ pos = 16.0075 spacing = 5.30225 }
+        line{ pos = 21.3097 spacing = 6.89292 }
+        line{ pos = 28.2027 spacing = 8.9608 }
+        line{ pos = 37.1635 spacing = 11.649 }
+        line{ pos = 48.8125 spacing = 15.1438 }
+        line{ pos = 63.9563 spacing = 19.6869 }
+        line{ pos = 83.6432 spacing = 32.7137 }
+        line{ pos = 116.357 spacing = 19.6869 }
+        line{ pos = 136.044 spacing = 15.1438 }
+        line{ pos = 151.187 spacing = 11.649 }
+        line{ pos = 162.837 spacing = 8.9608 }
+        line{ pos = 171.797 spacing = 6.89292 }
+        line{ pos = 178.69 spacing = 5.30225 }
+        line{ pos = 183.993 spacing = 4.07865 }
+        line{ pos = 188.071 spacing = 3.13743 }
+        line{ pos = 191.209 spacing = 2.4134 }
+        line{ pos = 193.622 spacing = 1.85647 }
+        line{ pos = 195.478 spacing = 1.42805 }
+        line{ pos = 196.906 spacing = 1.0985 }
+        line{ pos = 198.005 spacing = 0.845 }
+        line{ pos = 198.85 spacing = 0.65 }
+        line{ pos = 199.5 spacing = 0.5 }
+        line{ pos = 200 spacing = 0.5 }
+        line{ pos = 200.5 spacing = 0.65 }
+        line{ pos = 201.15 spacing = 0.845 }
+        line{ pos = 201.995 spacing = 1.0985 }
+        line{ pos = 203.094 spacing = 1.42805 }
+        line{ pos = 204.522 spacing = 1.85647 }
+        line{ pos = 206.378 spacing = 2.4134 }
+        line{ pos = 208.791 spacing = 3.13743 }
+        line{ pos = 211.929 spacing = 4.07865 }
+        line{ pos = 216.007 spacing = 5.30225 }
+        line{ pos = 221.31 spacing = 6.89292 }
+        line{ pos = 228.203 spacing = 8.9608 }
+        line{ pos = 237.163 spacing = 11.649 }
+        line{ pos = 248.813 spacing = 15.1438 }
+        line{ pos = 263.956 spacing = 19.6869 }
+        line{ pos = 283.643 spacing = 32.7137 }
+        line{ pos = 316.357 spacing = 19.6869 }
+        line{ pos = 336.044 spacing = 15.1438 }
+        line{ pos = 351.187 spacing = 11.649 }
+        line{ pos = 362.837 spacing = 8.9608 }
+        line{ pos = 371.797 spacing = 6.89292 }
+        line{ pos = 378.69 spacing = 5.30225 }
+        line{ pos = 383.993 spacing = 4.07865 }
+        line{ pos = 388.071 spacing = 3.13743 }
+        line{ pos = 391.209 spacing = 2.4134 }
+        line{ pos = 393.622 spacing = 1.85647 }
+        line{ pos = 395.478 spacing = 1.42805 }
+        line{ pos = 396.906 spacing = 1.0985 }
+        line{ pos = 398.005 spacing = 0.845 }
+        line{ pos = 398.85 spacing = 0.65 }
+        line{ pos = 399.5 spacing = 0.5 }
+        line{ pos = 400 spacing = 0.5 }
+    }
+}
+classical{
+    Gamma{} HH{} LH{} SO{}
+    output_bandedges{ averaged = no }
+    output_carrier_densities{}
+}
+poisson{ output_potential{} output_electric_field{} }
+run{ poisson{} }

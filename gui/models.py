@@ -23,7 +23,10 @@ class SolveSettings:
     T: float = 300.0
     dx_nm: float = 0.2
     quantum: bool = True
-    include_spontaneous_polarization: bool = False
+    # Constant quasi-Fermi levels under bias (Efn - Efp = qV at every
+    # interior node, no current) -- see solve_self_consistent(flat_qfl=).
+    flat_qfl: bool = False
+    include_spontaneous_polarization: bool = True
     n_states_e: int = 16
     n_states_h: int = 16
     max_iter: int = 5000

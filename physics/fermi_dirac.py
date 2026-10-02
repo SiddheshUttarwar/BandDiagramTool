@@ -431,7 +431,8 @@ def quantum_electron_density(psi_n: np.ndarray,
                               E_n: np.ndarray,
                               Efn: float,
                               m_e_dos: np.ndarray,
-                              T: float) -> np.ndarray:
+                              T: float,
+                              local_qfl: bool = False) -> np.ndarray:
     """
     Carrier density from quantised electron subbands [cm^-3].
 
@@ -481,18 +482,32 @@ def quantum_electron_density(psi_n: np.ndarray,
         # back to the previous (already-validated) behavior whenever Efn
         # is uniform across the subband's extent, e.g. equilibrium or a
         # thin quantum well.
-        Efn_s = float(np.average(Efn_arr, weights=psi_n[s]**2)) if Efn_arr.ndim > 0 else float(Efn_arr)
-        eta = (Efn_s - En) / kBT_eV
-        # Use average effective mass over the wavefunction extent
+        #
+        # local_qfl=True instead occupies each subband with the LOCAL
+        # quasi-Fermi level at every x (nextnano++'s treatment under current
+        # flow). Used by biased drift-diffusion solves: there the quantum
+        # density enters transport through gamma = n_quantum/n_classical,
+        # and with the averaged Efn that ratio carries a factor
+        # exp((<Efn> - Efn(x))/kT) that changes whenever Efn does --
+        # confirmed to keep the Schrodinger <-> transport loop from
+        # converging on the UV-LED at 6 V (|dln gamma| stuck at 1-2.5).
+        # With the local form gamma depends only on the potential shape.
+        # Identical to the averaged form whenever Efn is flat (equilibrium).
         m_avg = float(np.mean(m_e_dos)) * m0   # kg
-        N2D   = (m_avg * kBT_J / (np.pi * hbar**2)) * np.log1p(np.exp(min(eta, 500.0)))
+        pref = m_avg * kBT_J / (np.pi * hbar**2)
+        if local_qfl and Efn_arr.ndim > 0:
+            N2D = pref * np.logaddexp(0.0, np.minimum((Efn_arr - En) / kBT_eV, 500.0))
+        else:
+            Efn_s = float(np.average(Efn_arr, weights=psi_n[s]**2)) if Efn_arr.ndim > 0 else float(Efn_arr)
+            eta = (Efn_s - En) / kBT_eV
+            N2D = pref * np.log1p(np.exp(min(eta, 500.0)))
         n_q  += psi_n[s]**2 * N2D   # m^-3
 
     return np.maximum(n_q, 1e-20) * 1e-6   # m^-3 → cm^-3
 
 
-def quantum_hole_density(psi_h: np.ndarray, E_h: np.ndarray, Efp: float | np.ndarray, 
-                         m_h: np.ndarray, T: float) -> np.ndarray:
+def quantum_hole_density(psi_h: np.ndarray, E_h: np.ndarray, Efp: float | np.ndarray,
+                         m_h: np.ndarray, T: float, local_qfl: bool = False) -> np.ndarray:
     """
     Compute hole density from confined wavefunctions [cm^-3].
 
@@ -532,9 +547,14 @@ def quantum_hole_density(psi_h: np.ndarray, E_h: np.ndarray, Efp: float | np.nda
         # why broadcasting it straight in here instead of using the
         # wavefunction-weighted average is a real convergence bug for a
         # wide (not-thin-QW) quantum region.
-        Efp_k = float(np.average(Efp_arr, weights=psi_h[k]**2)) if Efp_arr.ndim > 0 else float(Efp_arr)
-        eta = (Ev_sub - Efp_k) / kBT_eV
-        P2D = (m_avg * kBT_J / (np.pi * hbar**2)) * np.log1p(np.exp(min(eta, 500.0)))
+        # local_qfl: see quantum_electron_density.
+        pref = m_avg * kBT_J / (np.pi * hbar**2)
+        if local_qfl and Efp_arr.ndim > 0:
+            P2D = pref * np.logaddexp(0.0, np.minimum((Ev_sub - Efp_arr) / kBT_eV, 500.0))
+        else:
+            Efp_k = float(np.average(Efp_arr, weights=psi_h[k]**2)) if Efp_arr.ndim > 0 else float(Efp_arr)
+            eta = (Ev_sub - Efp_k) / kBT_eV
+            P2D = pref * np.log1p(np.exp(min(eta, 500.0)))
         
         psi2 = psi_h[k]**2
         p_q += psi2 * P2D   # m^-3

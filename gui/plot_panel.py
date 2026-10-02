@@ -75,7 +75,7 @@ _FULL_DEVICE = "Full device"
 # PolyCollections these panels use, and would autoscale from the *full*
 # device's data regardless of the current xlim, not just the visible slice).
 _Y_FIELDS = {
-    "Band Diagram": ["Ec", "Ev", "Ev_lh", "Ev_so", "Ei", "Efn", "Efp"],
+    "Band Diagram": ["Ec", "Ev", "Ev_hh", "Ev_lh", "Ev_so", "Ei", "Efn", "Efp"],
     "Wavefunctions": ["Ec", "Ev", "Ei", "Efn", "Efp"],
     "Carriers": ["n", "p"],
     "Fields": ["E_field", "F_quasi"],

@@ -1,0 +1,111 @@
+global{
+    simulate1D{}
+    crystal_wz{ x_hkl = [0, 0, 1] y_hkl = [1, 0, 0] }
+    substrate{ name = "GaN" }
+    temperature = 300
+}
+impurities{
+    donor{ name = "nd0" energy = 0.018 degeneracy = 2 }
+    charge{ name = "qpos" type = positive }
+    charge{ name = "qneg" type = negative }
+}
+contacts{
+    ohmic{ name = "bottom" bias = 0.0 }
+    schottky{ name = "top" bias = 0.0 barrier = 1.23 }
+}
+structure{
+    region{ binary{ name = "GaN" } line{ x = [0, 400] } doping{ constant{ name = "nd0" conc = 1e+16 } } }
+    region{ ternary_constant{ name = "Al(x)Ga(1-x)N" alloy_x = 0.3 } line{ x = [400, 425] } }
+    region{ line{ x = [399.9, 400] } doping{ constant{ name = "qpos" conc = 3.57168e+20 } } }
+    region{ line{ x = [400, 400.1] } doping{ constant{ name = "qpos" conc = 3.57168e+20 } } }
+    region{ contact{ name = "bottom" } line{ x = [0, 0.1] } }
+    region{ contact{ name = "top" } line{ x = [424.9, 425] } }
+}
+grid{
+    xgrid{
+        line{ pos = 0 spacing = 0.1 }
+        line{ pos = 0.1 spacing = 0.13 }
+        line{ pos = 0.23 spacing = 0.169 }
+        line{ pos = 0.399 spacing = 0.2197 }
+        line{ pos = 0.6187 spacing = 0.28561 }
+        line{ pos = 0.90431 spacing = 0.371293 }
+        line{ pos = 1.2756 spacing = 0.482681 }
+        line{ pos = 1.75828 spacing = 0.627485 }
+        line{ pos = 2.38577 spacing = 0.815731 }
+        line{ pos = 3.2015 spacing = 1.06045 }
+        line{ pos = 4.26195 spacing = 1.37858 }
+        line{ pos = 5.64053 spacing = 1.79216 }
+        line{ pos = 7.4327 spacing = 2.32981 }
+        line{ pos = 9.7625 spacing = 3.02875 }
+        line{ pos = 12.7913 spacing = 3.93738 }
+        line{ pos = 16.7286 spacing = 5.11859 }
+        line{ pos = 21.8472 spacing = 6.65417 }
+        line{ pos = 28.5014 spacing = 8.65042 }
+        line{ pos = 37.1518 spacing = 11.2455 }
+        line{ pos = 48.3973 spacing = 14.6192 }
+        line{ pos = 63.0165 spacing = 19.005 }
+        line{ pos = 82.0215 spacing = 24.7065 }
+        line{ pos = 106.728 spacing = 32.1184 }
+        line{ pos = 138.846 spacing = 41.7539 }
+        line{ pos = 180.6 spacing = 38.7995 }
+        line{ pos = 219.4 spacing = 41.7539 }
+        line{ pos = 261.154 spacing = 32.1184 }
+        line{ pos = 293.272 spacing = 24.7065 }
+        line{ pos = 317.978 spacing = 19.005 }
+        line{ pos = 336.983 spacing = 14.6192 }
+        line{ pos = 351.603 spacing = 11.2455 }
+        line{ pos = 362.848 spacing = 8.65042 }
+        line{ pos = 371.499 spacing = 6.65417 }
+        line{ pos = 378.153 spacing = 5.11859 }
+        line{ pos = 383.271 spacing = 3.93738 }
+        line{ pos = 387.209 spacing = 3.02875 }
+        line{ pos = 390.237 spacing = 2.32981 }
+        line{ pos = 392.567 spacing = 1.79216 }
+        line{ pos = 394.359 spacing = 1.37858 }
+        line{ pos = 395.738 spacing = 1.06045 }
+        line{ pos = 396.799 spacing = 0.815731 }
+        line{ pos = 397.614 spacing = 0.627485 }
+        line{ pos = 398.242 spacing = 0.482681 }
+        line{ pos = 398.724 spacing = 0.371293 }
+        line{ pos = 399.096 spacing = 0.28561 }
+        line{ pos = 399.381 spacing = 0.2197 }
+        line{ pos = 399.601 spacing = 0.169 }
+        line{ pos = 399.77 spacing = 0.13 }
+        line{ pos = 399.9 spacing = 0.1 }
+        line{ pos = 400 spacing = 0.1 }
+        line{ pos = 400.1 spacing = 0.13 }
+        line{ pos = 400.23 spacing = 0.169 }
+        line{ pos = 400.399 spacing = 0.2197 }
+        line{ pos = 400.619 spacing = 0.28561 }
+        line{ pos = 400.904 spacing = 0.371293 }
+        line{ pos = 401.276 spacing = 0.482681 }
+        line{ pos = 401.758 spacing = 0.627485 }
+        line{ pos = 402.386 spacing = 0.815731 }
+        line{ pos = 403.201 spacing = 1.06045 }
+        line{ pos = 404.262 spacing = 1.37858 }
+        line{ pos = 405.641 spacing = 1.79216 }
+        line{ pos = 407.433 spacing = 2.32981 }
+        line{ pos = 409.763 spacing = 5.47499 }
+        line{ pos = 415.237 spacing = 2.32981 }
+        line{ pos = 417.567 spacing = 1.79216 }
+        line{ pos = 419.359 spacing = 1.37858 }
+        line{ pos = 420.738 spacing = 1.06045 }
+        line{ pos = 421.799 spacing = 0.815731 }
+        line{ pos = 422.614 spacing = 0.627485 }
+        line{ pos = 423.242 spacing = 0.482681 }
+        line{ pos = 423.724 spacing = 0.371293 }
+        line{ pos = 424.096 spacing = 0.28561 }
+        line{ pos = 424.381 spacing = 0.2197 }
+        line{ pos = 424.601 spacing = 0.169 }
+        line{ pos = 424.77 spacing = 0.13 }
+        line{ pos = 424.9 spacing = 0.1 }
+        line{ pos = 425 spacing = 0.1 }
+    }
+}
+classical{
+    Gamma{} HH{} LH{} SO{}
+    output_bandedges{ averaged = no }
+    output_carrier_densities{}
+}
+poisson{ output_potential{} output_electric_field{} }
+run{ poisson{} }

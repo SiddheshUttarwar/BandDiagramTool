@@ -32,6 +32,7 @@ class SolveRequest:
     dx_nm: float
     include_spontaneous_polarization: bool
     quantum: bool
+    flat_qfl: bool
     n_states_e: int
     n_states_h: int
     max_iter: int
@@ -133,7 +134,7 @@ class SolveWorker:
         if req.sweep:
             results = device.sweep_voltage(
                 req.V_start, req.V_stop, n_steps=req.n_steps,
-                quantum=req.quantum,
+                quantum=req.quantum, flat_qfl=req.flat_qfl,
                 alpha=req.alpha, max_iter=req.max_iter,
                 verbose=True, log_fn=log_fn,
                 cancel_check=self._cancel_event.is_set,
@@ -147,7 +148,7 @@ class SolveWorker:
             # quasi-Fermi split).
             result = device.solve_ramped(
                 V_applied=req.V_applied,
-                quantum=req.quantum, n_states_e=req.n_states_e,
+                quantum=req.quantum, flat_qfl=req.flat_qfl, n_states_e=req.n_states_e,
                 n_states_h=req.n_states_h, max_iter=req.max_iter,
                 tol=req.tol, alpha=req.alpha,
                 verbose=True, log_fn=log_fn,

@@ -46,6 +46,7 @@ from __future__ import annotations
 import logging
 import weakref
 import numpy as np
+from physics.materials.algan import donor_ionization_energy, acceptor_ionization_energy
 from scipy.optimize import brentq
 from scipy.ndimage import gaussian_filter1d
 from dataclasses import dataclass, field, replace as _dc_replace
@@ -63,7 +64,8 @@ from physics.poisson import (
 from physics.schrodinger import solve_schrodinger, hole_potential
 from physics.drift_diffusion import compute_current_density, compute_recombination_components
 from physics.gain import compute_gain_spectrum
-from physics.coupled_solver import solve_coupled_dd, QuantumState, SolveCancelled, CoupledResult
+from physics.coupled_solver import QuantumState, SolveCancelled, CoupledResult
+from physics import dd_newton
 from physics.optical import (
     ground_state_transition, dominant_transition,
     overlap_squared, hole_subband_energy,
@@ -316,10 +318,10 @@ def _blended_density(quantum_density: np.ndarray, classical_density: np.ndarray,
     return np.where(region_mask, quantum_density, classical_density)
 
 
-# Hole band name -> (band-edge-below-Ev0 array attr, mass array attr) on
-# GridData, for the decoupled 3-band effective-mass valence model (see
-# physics.materials.algan.AlGaNParams.valence_band_structure). 'hh' has no
-# offset (Ev0 *is* the HH edge in this module's convention).
+# Hole band name -> mass array attr on GridData, for the decoupled 3-band
+# effective-mass valence model (see physics.materials.algan.AlGaNParams.
+# valence_offsets_from_top). Ev0 is the TOPMOST valence band; each band sits
+# g.dEv_<band> (>= 0) below it.
 _HOLE_BAND_MASS_ATTR = {'hh': 'm_hh', 'lh': 'm_lh', 'so': 'm_so'}
 
 
@@ -352,10 +354,10 @@ def _quantum_gamma(quantum_blended: np.ndarray, classical: np.ndarray,
 
 def _hole_band_edges(Ev: np.ndarray, g: GridData) -> dict:
     """HH/LH/SO valence band-edge profiles [eV] at the current phi, on the
-    same absolute scale as Ev = g.Ev0 - phi. LH/SO offsets are static (see
-    devices.grid_builder's dEv_lh/dEv_so), so they just subtract straight
-    off Ev like the phi shift already applied to it."""
-    return {'hh': Ev, 'lh': Ev - g.dEv_lh, 'so': Ev - g.dEv_so}
+    same absolute scale as Ev = g.Ev0 - phi (the topmost band). The
+    per-band depths are static (devices.grid_builder's dEv_hh/lh/so), so
+    they just subtract straight off Ev like the phi shift already applied."""
+    return {'hh': Ev - g.dEv_hh, 'lh': Ev - g.dEv_lh, 'so': Ev - g.dEv_so}
 
 
 def _solve_hole_bands(Ev: np.ndarray, g: GridData, dx, q_i0: int, q_i1: int,
@@ -372,13 +374,14 @@ def _solve_hole_bands(Ev: np.ndarray, g: GridData, dx, q_i0: int, q_i1: int,
     return bands
 
 
-def _total_quantum_hole_density(bands: dict, Efp, T: float, g: GridData) -> np.ndarray:
+def _total_quantum_hole_density(bands: dict, Efp, T: float, g: GridData,
+                                local_qfl: bool = False) -> np.ndarray:
     """Sum quantum_hole_density across HH/LH/SO -- position-space density
     is additive across independent (decoupled, unmixed) bands."""
     total = np.zeros(g.N)
     for name, (E, psi) in bands.items():
         m_band = getattr(g, _HOLE_BAND_MASS_ATTR[name])
-        total = total + quantum_hole_density(psi, E, Efp, m_band, T)
+        total = total + quantum_hole_density(psi, E, Efp, m_band, T, local_qfl)
     return total
 
 
@@ -474,6 +477,17 @@ class SolverResult:
     eps_xx: np.ndarray
     eps_zz: np.ndarray
 
+    # Drift-diffusion current (biased solves only; see physics.dd_newton).
+    # J_n/J_p are per-EDGE current densities [A/cm^2] (length N-1);
+    # current_conservation_error = (max J - min J)/max|J| over the device,
+    # ~0 for a physically valid steady state. It is only meaningful when
+    # |J| is above the double-precision resolution of the quasi-Fermi
+    # gradients (J below ~1e-6 A/cm^2 on typical devices reads as ~1).
+    J_n: Optional[np.ndarray] = None
+    J_p: Optional[np.ndarray] = None
+    J_total: float = float('nan')
+    current_conservation_error: float = float('nan')
+
     # Wavefunctions (quantum mode)
     E_e: Optional[np.ndarray] = None
     psi_e: Optional[np.ndarray] = None
@@ -491,6 +505,10 @@ class SolverResult:
     Ev_hh: Optional[np.ndarray] = None
     Ev_lh: Optional[np.ndarray] = None
     Ev_so: Optional[np.ndarray] = None
+    # Electron affinity actually used per grid point [eV], including the
+    # strain (deformation-potential) shift of Ec -- the vacuum level is
+    # Ec + chi. None for results built without it.
+    chi: Optional[np.ndarray] = None
     E_h_lh: Optional[np.ndarray] = None
     psi_h_lh: Optional[np.ndarray] = None
     E_h_so: Optional[np.ndarray] = None
@@ -580,7 +598,30 @@ class SolverResult:
     NA: np.ndarray  = field(default_factory=lambda: np.array([]))
 
 
+def _mobility_profiles(g: GridData):
+    """Per-node low-field mobilities [cm^2/Vs]: linear in Al fraction
+    between GaN (300 / 10) and AlN (25 / 2) -- the same endpoints the
+    solver previously averaged over the whole device into one scalar."""
+    return (300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al,
+            10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al)
+
+
+def _dd_problem(g: GridData, Ed_x, Ea_x, surf_idx, surf_density_cm3,
+                surf_energy_eV, surf_is_donor, gamma_n=None, gamma_p=None) -> "dd_newton.DDProblem":
+    mu_n, mu_p = _mobility_profiles(g)
+    return dd_newton.DDProblem(
+        g.Ec0, g.Ev0, g.Nc, g.Nv, g.ND, g.NA, Ed_x, Ea_x, g.pol_rho, g.eps_r, g.dx,
+        g.T, mu_n, mu_p, surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
+        gamma_n, gamma_p)
+
+
 def _current_density_from_result(result: "SolverResult", grid: GridData) -> float:
+    if np.isfinite(result.J_total):
+        return float(result.J_total)
+    return _legacy_current_density_from_result(result, grid)
+
+
+def _legacy_current_density_from_result(result: "SolverResult", grid: GridData) -> float:
     """Gamma-corrected (degeneracy-aware) Scharfetter-Gummel current density
     [A/cm^2] at a converged bias solve -- same psi_n_eff/psi_p_eff
     construction used by the R_series IR-drop calculation elsewhere in this
@@ -667,6 +708,18 @@ def _solve_bias_with_series_resistance(
     gap_tol = max(tol * 10.0, 1e-4)
     best: Optional[tuple] = None   # (abs_gap, result, V_internal)
 
+    # The IR drop always opposes the applied bias (it pulls V_internal
+    # toward 0 whatever the polarity), so everything below works with
+    # s = sign(V_applied): V_applied = V_internal + s*|J|*R_series, and
+    # V_internal lies between 0 and V_applied. Using +|J|*R and clamping to
+    # [0, V_applied] was only right for V_applied > 0 -- for reverse bias
+    # that interval is empty and V_internal was pinned at V_applied.
+    s = 1.0 if V_applied >= 0.0 else -1.0
+    V_lo_b, V_hi_b = min(0.0, V_applied), max(0.0, V_applied)
+
+    def _clamp(v: float, a: float, b: float) -> float:
+        return min(max(v, min(a, b)), max(a, b))
+
     # Fast path: damped fixed-point iteration directly on
     #   V_internal = V_applied - |J(V_internal)| * R_series
     # instead of bisecting a search bracket. This is the natural fast
@@ -692,7 +745,7 @@ def _solve_bias_with_series_resistance(
             break
 
         J = _current_density_from_result(res, grid)
-        implied_V_applied = V_internal + abs(J) * R_series
+        implied_V_applied = V_internal + s * abs(J) * R_series
         gap = implied_V_applied - V_applied
         if verbose:
             _log(f"  R_series fixed-point iter {it+1}: V_internal={V_internal:.4f}  "
@@ -710,8 +763,8 @@ def _solve_bias_with_series_resistance(
             damping = max(damping * 0.5, 0.05)
         prev_gap = gap
 
-        V_internal_target = V_applied - abs(J) * R_series
-        V_internal = min(max(V_internal + damping * (V_internal_target - V_internal), 0.0), V_applied)
+        V_internal_target = V_applied - s * abs(J) * R_series
+        V_internal = _clamp(V_internal + damping * (V_internal_target - V_internal), V_lo_b, V_hi_b)
     else:
         if verbose:
             _log(f"  R_series fixed-point path used its full budget "
@@ -732,7 +785,7 @@ def _solve_bias_with_series_resistance(
         # collapse lo/hi the way treating it as "too high" did.
         res = None
         for jitter in (0.0, 0.01, -0.01, 0.03, -0.03):
-            V_try = min(max(V_mid + jitter * (hi - lo), lo), hi)
+            V_try = _clamp(V_mid + jitter * (hi - lo), lo, hi)
             res = eval_at(V_try)
             if res.converged:
                 break
@@ -743,7 +796,7 @@ def _solve_bias_with_series_resistance(
             continue
 
         J = _current_density_from_result(res, grid)
-        implied_V_applied = V_try + abs(J) * R_series
+        implied_V_applied = V_try + s * abs(J) * R_series
         gap = implied_V_applied - V_applied
         if verbose:
             _log(f"  R_series bisection iter {it+1:2d}: V_internal={V_try:.4f}  "
@@ -753,7 +806,7 @@ def _solve_bias_with_series_resistance(
             best = (abs(gap), res, V_try)
         if abs(gap) < max(tol * 10.0, 1e-4):
             break
-        if implied_V_applied > V_applied:
+        if s * implied_V_applied > s * V_applied:
             hi = V_try
         else:
             lo = V_try
@@ -809,7 +862,10 @@ def _get_equilibrium_phi_init(
     solve itself doesn't converge, rather than seeding from a known-bad
     profile.
     """
-    key = id(grid)
+    # quantum is part of the key: the quantum and classical equilibria
+    # differ, and one grid is solved both ways (e.g. a quantum bias solve's
+    # classical warm start).
+    key = (id(grid), bool(quantum))
     if key not in _equilibrium_phi_cache:
         eq_result = solve_self_consistent(
             grid, V_applied=0.0, quantum=quantum,
@@ -845,9 +901,19 @@ def solve_self_consistent(
     Efn_init: Optional[np.ndarray] = None,
     Efp_init: Optional[np.ndarray] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
+    flat_qfl: bool = False,
 ) -> SolverResult:
     """
     Run the self-consistent Schrödinger-Poisson solver.
+
+    flat_qfl : constant-quasi-Fermi-level bias mode (no current solved,
+               nextnano-style). Efn is held at the n-contact value (0) and
+               Efp at the p-contact value (-V_applied) at every interior
+               grid node, so Efn - Efp = qV_applied everywhere except the
+               two contact nodes, and only (Schrodinger-)Poisson is solved
+               for phi. Good for band diagrams / QCSE / wavefunctions under
+               bias; carries no current information (J = 0), and R_series
+               is ignored (no current, no IR drop).
 
     Uses Newton-Raphson linearisation for the Poisson step:
         [A_pos + D] * phi_new = D*phi + rho/eps0
@@ -929,6 +995,11 @@ def solve_self_consistent(
     g      = grid
     T      = g.T
     kBT_eV = kB * T / _q
+    # Composition-dependent dopant ionization energies (Si donor, Mg
+    # acceptor vs Al fraction -- physics.materials.algan), used by the
+    # initial guess and every solve path below.
+    Ed_x = donor_ionization_energy(g.x_Al)
+    Ea_x = acceptor_ionization_energy(g.x_Al)
     _log   = log_fn if log_fn is not None else print
     if alpha_max is None:
         alpha_max = alpha
@@ -938,7 +1009,7 @@ def solve_self_consistent(
     # adaptive-alpha damping + Anderson mixing, and biased solves use the
     # fully-coupled Newton solve in physics.coupled_solver. Neither has a
     # user-tunable step-size knob any more.
-    bias_coupled = (V_applied != 0.0)
+    bias_coupled = (V_applied != 0.0) and not flat_qfl
 
     if bias_coupled and R_series > 0.0:
         return _solve_bias_with_series_resistance(
@@ -966,7 +1037,7 @@ def solve_self_consistent(
                 _log("  Quantum bias solve: warm-started from the converged classical solution.")
 
     warm_started = phi_init is not None and Efn_init is not None
-    if bias_coupled and phi_init is None:
+    if V_applied != 0.0 and phi_init is None:
         phi_init = _get_equilibrium_phi_init(
             grid, quantum, n_states_e, n_states_h, log_fn, cancel_check)
 
@@ -1074,6 +1145,27 @@ def solve_self_consistent(
     Efp[0] = 0.0
     Efp[-1] = -V_applied
 
+    if flat_qfl:
+        # Constant quasi-Fermi levels: each carrier's QFL sits at its own
+        # contact's Fermi level at every interior node, so the split is
+        # exactly qV_applied everywhere but the (ohmic, split = 0) contact
+        # nodes themselves. These stay fixed for the whole solve -- the
+        # V_applied != 0 path below then runs the same Poisson(+Schrodinger)
+        # loop as equilibrium, just with these QFLs and biased phi BCs.
+        # Which contact is the n-side is read from the net doping at the
+        # two contact nodes: hard-coding n = bottom gave a split of -qV at
+        # forward bias on a p-down device (the DD solve gives +qV there).
+        n_at_bottom = (g.ND[0] - g.NA[0]) >= (g.ND[-1] - g.NA[-1])
+        Ef_n_contact, Ef_p_contact = (0.0, -V_applied) if n_at_bottom else (-V_applied, 0.0)
+        Efn = np.full(g.N, Ef_n_contact)
+        Efp = np.full(g.N, Ef_p_contact)
+        Efn[0] = Efp[0] = 0.0
+        Efn[-1] = Efp[-1] = -V_applied
+        if verbose:
+            _log(f"  Flat quasi-Fermi levels ({'n' if n_at_bottom else 'p'}-side at bottom): "
+                 f"Efn = {Ef_n_contact:.4f}, Efp = {Ef_p_contact:.4f} eV at all interior "
+                 f"nodes (split = {Ef_n_contact - Ef_p_contact:.4f} eV), Poisson-only, no current.")
+
     # --- Initial phi: Hybrid Anchor-and-Smooth Initialization ---
     if phi_init is not None:
         phi = phi_init.copy()
@@ -1086,9 +1178,9 @@ def solve_self_consistent(
                 Ec_guess = g.Ec0[i] - phi_guess
                 Ev_guess = g.Ev0[i] - phi_guess
                 # Composition-dependent incomplete ionization
-                Ed_i = 0.02 + 0.28 * g.x_Al[i]   # Si donor activation energy
+                Ed_i = Ed_x[i]
                 Nd_plus = g.ND[i] / (1.0 + 2.0 * np.exp(np.clip((Efn[i] - (Ec_guess - Ed_i)) / kBT_eV, -500, 500)))
-                Na_minus = g.NA[i] / (1.0 + 4.0 * np.exp(np.clip((Ev_guess + 0.17 - Efp[i]) / kBT_eV, -500, 500)))
+                Na_minus = g.NA[i] / (1.0 + 4.0 * np.exp(np.clip((Ev_guess + Ea_x[i] - Efp[i]) / kBT_eV, -500, 500)))
                 n_guess = electron_density(Ec_guess, Efn[i], g.Nc[i], T)
                 p_guess = hole_density(Ev_guess, Efp[i], g.Nv[i], T)
                 return (Nd_plus - Na_minus) + p_guess - n_guess
@@ -1216,6 +1308,13 @@ def solve_self_consistent(
     gamma_beta = _QUANTUM_GAMMA_BETA_INIT
     gamma_mismatch = np.inf
 
+    # Drift-diffusion state (physics.dd_newton): whether (phi, Efn, Efp)
+    # already hold a converged biased solution to re-solve from, and the
+    # classical equilibrium potential the bias ramp starts from.
+    have_dd_state = warm_started
+    phi_eq_dd = None
+    dd_prob = None
+
     for iteration in range(max_iter):
         if cancel_check is not None and cancel_check():
             raise SolveCancelled("Solve cancelled by user")
@@ -1233,7 +1332,7 @@ def solve_self_consistent(
             E_cut_e = float(np.max(Efn[region_mask])) + _SUBBAND_CUTOFF_KT * kBT_eV
             E_cut_h = float(-np.min(Efp[region_mask])) + _SUBBAND_CUTOFF_KT * kBT_eV
             E_e, psi_e = _solve_confined_states(Ec, g.m_e, g.dx, n_states_e, q_i0, q_i1, g.N, E_cut_e)
-            n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T),
+            n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T, bias_coupled),
                                   electron_density(Ec, Efn, g.Nc, T), region_mask)
 
             # Decoupled 3-band effective-mass valence model (HH/LH/SO) --
@@ -1244,16 +1343,12 @@ def solve_self_consistent(
             E_h, psi_h = hole_bands['hh']
             E_h_lh, psi_h_lh = hole_bands['lh']
             E_h_so, psi_h_so = hole_bands['so']
-            p_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g)
+            p_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g, bias_coupled)
             p = _blended_density(p_quantum, hole_density(Ev, Efp, g.Nv, T), region_mask)
         else:
             n = electron_density(Ec, Efn, g.Nc, T)
             p = hole_density(Ev, Efp, g.Nv, T)
 
-        # Make Si a shallow donor (20 meV) everywhere to prevent total depletion of the n-layer
-        # (Nextnano standard default for AlGaN LED base layers)
-        Ed_x = np.full(g.N, 0.02)      # eV, Si donor
-        Ea_x = np.full(g.N, 0.17)      # eV, Mg acceptor
 
         if bias_coupled:
             # Biased solves: one fully-coupled Newton-Krylov solve of
@@ -1269,9 +1364,6 @@ def solve_self_consistent(
             # bottleneck -- confirmed empirically, the high-bias wall
             # barely moved after that fix alone. JFNK needs no analytic
             # Jacobian and includes its own Armijo line search by default.
-            mu_n_avg = float(np.mean(300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al))
-            mu_p_avg = float(np.mean(10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al))
-
             # Quantum-corrected drift-diffusion (predictor-corrector): the
             # Schrodinger solution from step b is frozen into per-node
             # correction factors gamma = n_quantum / n_classical (1 outside
@@ -1311,7 +1403,7 @@ def solve_self_consistent(
                     gamma_mismatch = max(
                         float(np.max(np.abs(lg_n - log_gamma_n_prev)[carries_n], initial=0.0)),
                         float(np.max(np.abs(lg_p - log_gamma_p_prev)[carries_p], initial=0.0)))
-                    if residual_history and len(residual_history) >= 2                             and residual_history[-1] > residual_history[-2]:
+                    if len(residual_history) >= 2 and residual_history[-1] > residual_history[-2]:
                         gamma_beta = max(gamma_beta * 0.5, _QUANTUM_GAMMA_BETA_MIN)
                     else:
                         gamma_beta = min(gamma_beta * 1.2, 1.0)
@@ -1321,16 +1413,33 @@ def solve_self_consistent(
                 quantum_gamma_n = np.exp(lg_n)
                 quantum_gamma_p = np.exp(lg_p)
 
-            cd_result = solve_coupled_dd(
-                phi, Efn, Efp, g.Ec0, g.Ev0, g.Nc, g.Nv, g.ND, g.NA, Ed_x, Ea_x,
-                g.pol_rho, g.eps_r, g.dx, T, mu_n_avg, mu_p_avg,
-                phi_left, phi_right, 0.0, -V_internal, 0.0, -V_internal,
-                surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
-                quantum_gamma_n=quantum_gamma_n, quantum_gamma_p=quantum_gamma_p,
-                tol=1e-3, maxiter=40,
-                log_fn=(_log if verbose else None),
-                cancel_check=cancel_check,
-            )
+            # Fully-coupled analytic-Jacobian Newton (physics.dd_newton),
+            # converged on the TRUE equations (see [[bug-current-not-conserved]]
+            # for why the previous PTC/Gummel solver was replaced). The
+            # first biased solve ramps the bias up from the converged
+            # equilibrium; later outer iterations (quantum gamma updates)
+            # re-solve from the current state, falling back to a ramp.
+            dd_prob = _dd_problem(g, Ed_x, Ea_x, surf_idx, surf_density_cm3,
+                                  surf_energy_eV, surf_is_donor,
+                                  quantum_gamma_n, quantum_gamma_p)
+            dd_log = (_log if verbose else None)
+            cd_result = None
+            if have_dd_state:
+                cd_result = dd_newton.newton_solve(
+                    dd_prob, phi, Efn, Efp,
+                    (phi_left, phi_right, 0.0, -V_internal, 0.0, -V_internal),
+                    cancel_check=cancel_check)
+            if cd_result is None or not cd_result.converged:
+                if phi_eq_dd is None:
+                    phi_eq_dd = _get_equilibrium_phi_init(
+                        grid, False, n_states_e, n_states_h, log_fn, cancel_check)
+                if phi_eq_dd is None:
+                    raise RuntimeError("Classical equilibrium solve did not converge; "
+                                       "cannot start the bias ramp.")
+                cd_result = dd_newton.solve_bias_ramp(
+                    dd_prob, phi_eq_dd, V_internal, phi_left, g.phi_top_eq,
+                    log_fn=dd_log, cancel_check=cancel_check)
+            have_dd_state = have_dd_state or cd_result.converged
             phi_candidate = cd_result.phi
             Efn = cd_result.Efn
             Efp = cd_result.Efp
@@ -1350,9 +1459,9 @@ def solve_self_consistent(
             Ec_cd = g.Ec0 - phi_candidate
             Ev_cd = g.Ev0 - phi_candidate
             if quantum:
-                n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T),
+                n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T, bias_coupled),
                                       electron_density(Ec_cd, Efn, g.Nc, T), region_mask)
-                p_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g)
+                p_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g, bias_coupled)
                 p = _blended_density(p_quantum,
                                       hole_density(Ev_cd, Efp, g.Nv, T), region_mask)
             else:
@@ -1497,8 +1606,8 @@ def solve_self_consistent(
         if verbose:
             if bias_coupled:
                 _log(f"  outer iter {iteration+1:4d}  |dphi|_max = {residual:.3e} V  "
-                      f"coupled-NK {'converged' if cd_result.converged else 'DID NOT CONVERGE'} "
-                      f"in {cd_result.n_iter} iters (residual={cd_result.final_residual:.3e})"
+                      f"DD Newton {'converged' if cd_result.converged else 'DID NOT CONVERGE'} "
+                      f"in {cd_result.n_iter} iters (max update={cd_result.max_update:.3e} V)"
                       + (f"  |dln(gamma)|={gamma_mismatch:.2e} beta={gamma_beta:.2f}"
                          if quantum else ""))
             else:
@@ -1514,11 +1623,31 @@ def solve_self_consistent(
         prev_residual = residual
         n_iter = iteration + 1
         if bias_coupled:
-            # A small outer-iteration step (|dphi|_max < tol) is only real
-            # evidence of convergence if the coupled Newton-Krylov solve it
-            # came from actually succeeded. However, PTC-direct often stalls at a small
-            # but finite residual (e.g. O(1)) that is physically acceptable. We rely on the 
-            # outer loop |dphi| < tol to judge true convergence.
+            # The inner drift-diffusion solve must itself have converged:
+            # a failed solve that hands back its input unchanged gives
+            # |dphi| = 0 and used to be reported as converged (see
+            # [[bug-current-not-conserved]]). The DD solver already ramps
+            # and retries internally, so repeating it here is pointless --
+            # fail honestly instead.
+            if not cd_result.converged:
+                # The returned state is the last converged ramp point, so
+                # report the bias it actually corresponds to (shown next to
+                # V_applied in the result/plot title) rather than V_applied.
+                V_internal = float(cd_result.V_reached)
+                # The generic BC enforcement above just wrote the V_applied
+                # contact potential into phi[-1]; restore the reached one or
+                # the last edge's current is garbage (confirmed: that alone
+                # made a current-conserving 5.14 V state report a
+                # conservation error of 1.0).
+                # (phi aliases cd_result.phi, so it was overwritten in place
+                # too -- set the contact value explicitly.)
+                phi_right = g.phi_top_eq + V_internal
+                phi[-1] = phi_right
+                if verbose:
+                    _log(f"  Drift-diffusion solve failed ({cd_result.message}) -- "
+                         f"reporting converged=False; state shown is at "
+                         f"V = {V_internal:.4f} V.")
+                break
             if residual < tol and (not quantum or gamma_mismatch < _GAMMA_MISMATCH_TOL):
                 converged = True
                 break
@@ -1544,7 +1673,7 @@ def solve_self_consistent(
             converged = True
             break
 
-    if not converged and verbose:
+    if not converged and verbose and n_iter >= max_iter:
         _log(f"  Warning: did not converge after {max_iter} iterations "
               f"(|dphi|={residual:.2e} V)")
 
@@ -1556,9 +1685,9 @@ def solve_self_consistent(
     E_field  = electric_field(phi, g.dx)
 
     if quantum and psi_e is not None:
-        n_final = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T),
+        n_final = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T, bias_coupled),
                                     electron_density(Ec_final, Efn, g.Nc, T), region_mask)
-        p_final_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g)
+        p_final_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g, bias_coupled)
         p_final = _blended_density(p_final_quantum,
                                     hole_density(Ev_final, Efp, g.Nv, T), region_mask)
         Ev_hh_final, Ev_lh_final, Ev_so_final = (
@@ -1567,7 +1696,9 @@ def solve_self_consistent(
     else:
         n_final = electron_density(Ec_final, Efn, g.Nc, T)
         p_final = hole_density(Ev_final, Efp, g.Nv, T)
-        Ev_hh_final = Ev_lh_final = Ev_so_final = Ev_final
+        Ev_hh_final, Ev_lh_final, Ev_so_final = (
+            _hole_band_edges(Ev_final, g)[k] for k in ('hh', 'lh', 'so')
+        )
 
     qcse_transition_eV = None
     qcse_overlap = None
@@ -1654,8 +1785,20 @@ def solve_self_consistent(
             peak_gain_cm1 = spectrum.peak_gain_cm1
             peak_gain_wavelength_nm = spectrum.peak_wavelength_nm
 
+    J_n_edges = J_p_edges = None
+    J_total = float('nan')
+    current_err = float('nan')
+    if bias_coupled and dd_prob is not None:
+        J_n_edges, J_p_edges, J_t_edges, current_err = dd_newton.current_profile(dd_prob, phi, Efn, Efp)
+        J_total = float(np.mean(J_t_edges))
+        if verbose:
+            _log(f"  Current density J = {J_total:.4e} A/cm^2, conservation error "
+                 f"(max-min)/max|J| = {current_err:.2e}")
+
     return SolverResult(
         x_nm=g.x_nm, x_Al=g.x_Al,
+        J_n=J_n_edges, J_p=J_p_edges, J_total=J_total,
+        current_conservation_error=current_err,
         Ec=Ec_final, Ev=Ev_final, Ei=Ei_final,
         Efn=Efn, Efp=Efp,
         phi=phi, E_field=E_field, F_quasi=g.F_quasi,
@@ -1664,6 +1807,7 @@ def solve_self_consistent(
         eps_xx=g.eps_xx, eps_zz=g.eps_zz,
         E_e=E_e, psi_e=psi_e, E_h=E_h, psi_h=psi_h,
         Ev_hh=Ev_hh_final, Ev_lh=Ev_lh_final, Ev_so=Ev_so_final,
+        chi=np.asarray(g.chi).copy(),
         E_h_lh=E_h_lh, psi_h_lh=psi_h_lh, E_h_so=E_h_so, psi_h_so=psi_h_so,
         qcse_transition_eV=qcse_transition_eV, qcse_overlap=qcse_overlap,
         qcse_pair=qcse_pair, qcse_in_well=qcse_in_well,

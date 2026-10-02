@@ -53,13 +53,15 @@ class AlGaNDevice:
         contacts: List[Contact],
         T: float = 300.0,
         dx_nm: float = 0.1,
-        include_spontaneous_polarization: bool = False,
+        include_spontaneous_polarization: bool = True,
+        include_strain_band_shift: bool = True,
     ) -> None:
         self.layers   = layers
         self.contacts = contacts
         self.T        = T
         self.dx_nm    = dx_nm
         self.include_spontaneous_polarization = include_spontaneous_polarization
+        self.include_strain_band_shift = include_strain_band_shift
         self._grid: Optional[GridData] = None
         self.last_sweep_failed_voltages: List[float] = []
 
@@ -72,6 +74,7 @@ class AlGaNDevice:
         self._grid = build_grid(
             self.layers, self.contacts, T=self.T, dx_nm=self.dx_nm,
             include_spontaneous_polarization=self.include_spontaneous_polarization,
+            include_strain_band_shift=self.include_strain_band_shift,
         )
         return self._grid
 
@@ -176,6 +179,7 @@ class AlGaNDevice:
         max_iter: int = 200,
         log_fn: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        flat_qfl: bool = False,
     ) -> List[SolverResult]:
         """
         Solve at multiple bias voltages, each one independently from
@@ -215,6 +219,7 @@ class AlGaNDevice:
                 verbose=verbose,
                 log_fn=log_fn,
                 cancel_check=cancel_check,
+                flat_qfl=flat_qfl,
             )
             if not res.converged:
                 failed_voltages.append(V_target)
@@ -242,6 +247,7 @@ class AlGaNDevice:
         verbose: bool = False,
         log_fn: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        flat_qfl: bool = False,
         **_ignored,
     ) -> SolverResult:
         """
@@ -268,7 +274,7 @@ class AlGaNDevice:
             V_applied=V_applied, quantum=quantum,
             n_states_e=n_states_e, n_states_h=n_states_h,
             max_iter=max_iter, tol=tol, alpha=alpha, verbose=verbose,
-            log_fn=log_fn, cancel_check=cancel_check,
+            log_fn=log_fn, cancel_check=cancel_check, flat_qfl=flat_qfl,
         )
 
     # ------------------------------------------------------------------

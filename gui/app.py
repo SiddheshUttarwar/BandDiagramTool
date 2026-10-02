@@ -135,6 +135,7 @@ class App(QtWidgets.QMainWindow):
             T=s.T, dx_nm=s.dx_nm,
             include_spontaneous_polarization=s.include_spontaneous_polarization,
             quantum=s.quantum,
+            flat_qfl=s.flat_qfl,
             n_states_e=s.n_states_e, n_states_h=s.n_states_h,
             max_iter=s.max_iter, tol=s.tol, alpha=s.alpha,
             sweep=s.sweep_mode, V_applied=s.V_applied,
@@ -186,8 +187,11 @@ class App(QtWidgets.QMainWindow):
             status = "Converged" if r.converged else "Did not converge"
             v_note = f"V = {r.V_applied:.3f} V"
             if abs(r.V_internal - r.V_applied) > 0.01:
+                # Not converged: V_internal is where the bias ramp stalled,
+                # not an IR drop (it differs even with R_series = 0).
+                reason = "R_series IR drop" if r.converged else "bias ramp stopped here"
                 v_note = (f"V_applied = {r.V_applied:.3f} V, "
-                          f"V_internal = {r.V_internal:.3f} V (R_series IR drop)")
+                          f"V_internal = {r.V_internal:.3f} V ({reason})")
             self.plot_panel.set_status(
                 f"{status} in {r.n_iterations} iterations. ({v_note})")
 

@@ -16,7 +16,10 @@ from devices.layer import (
     AbruptLayer, GradedLayer, Contact,
     QuantumRegionMarker, SurfaceCharge, SurfaceState, InterfaceDipole,
 )
-from physics.materials.algan import get_AlGaN_params, get_AlGaN_params_T
+from physics.materials.algan import (
+    get_AlGaN_params, get_AlGaN_params_T,
+    donor_ionization_energy, acceptor_ionization_energy,
+)
 from physics.polarization import (
     compute_Psp, compute_strain, compute_Ppz, eps_zz_from_eps_xx,
     compute_pol_charge, compute_quasi_field, interface_sheet_charges,
@@ -57,14 +60,14 @@ class GridData:
     m_lh: np.ndarray         # light-hole eff. mass [units of m0]
     m_so: np.ndarray         # split-off hole eff. mass [units of m0]
 
-    # Zone-center (k_t=0) LH/SO band-edge offsets *below* Ev0 (the HH edge
-    # -- see physics.materials.algan.AlGaNParams.valence_band_structure).
-    # Position-dependent (via local Al composition), static -- doesn't
-    # depend on phi, so computed once here rather than every solver
-    # iteration. Ev_lh(x) = Ev0(x) - dEv_lh(x), Ev_so(x) = Ev0(x) - dEv_so(x)
-    # (can be negative for high-Al compositions -- see that docstring).
+    # Zone-center (k_t=0) HH/LH/SO band-edge depths *below* Ev0, where Ev0
+    # is the TOPMOST valence band (HH in GaN, the crystal-field/SO-
+    # character band in Al-rich AlGaN -- see physics.materials.algan.
+    # AlGaNParams.valence_offsets_from_top). All >= 0, position-dependent,
+    # static (independent of phi). Ev_b(x) = Ev0(x) - dEv_b(x).
     dEv_lh: np.ndarray
     dEv_so: np.ndarray
+    dEv_hh: np.ndarray
 
     # --- Doping [cm^-3] ---
     ND: np.ndarray           # ionised donor concentration
@@ -144,12 +147,25 @@ def _x_Al_profile(layer: AbruptLayer | GradedLayer, n_pts: int) -> np.ndarray:
                          f"Choose 'linear', 'parabolic', 'stepped', or 'abrupt'.")
 
 
+def _schottky_barrier(contact, chi_contact: float) -> float:
+    """Schottky barrier height Ec - Ef at the metal [eV]: the contact's
+    explicit barrier_eV when given (e.g. a measured or surface-pinned
+    value), else the Schottky-Mott estimate phi_M - chi. With the
+    VBO-derived chi (physics.materials.algan) Schottky-Mott gives e.g. Ni
+    ~1.0 eV on GaN and ~1.4 eV on Al0.3GaN, inside measured ranges."""
+    if getattr(contact, 'barrier_eV', None) is not None:
+        return float(contact.barrier_eV)
+    from physics.materials.metals import get_work_function
+    return get_work_function(contact.metal) - float(chi_contact)
+
+
 def build_grid(
     layers: list,
     contacts: list,
     T: float = 300.0,
     dx_nm: float = 0.1,
-    include_spontaneous_polarization: bool = False,
+    include_spontaneous_polarization: bool = True,
+    include_strain_band_shift: bool = True,
 ) -> GridData:
     """
     Build the 1D simulation grid from an ordered list of layers (bottom → top).
@@ -160,6 +176,11 @@ def build_grid(
     contacts : list of two Contact objects (one 'bottom', one 'top')
     T        : temperature [K]
     dx_nm    : grid spacing [nm]
+    include_strain_band_shift : if True (default), each point's strain
+        (pseudomorphic to the bottom layer, zero for relaxed layers, or the
+        layer's custom_strain_xx) shifts Ec and the valence bands via
+        deformation potentials (Vurgaftman & Meyer 2003). False keeps
+        unstrained band edges (strain still drives piezo polarization).
     include_spontaneous_polarization : if False, Psp is excluded from the
         charge (pol_rho, interface sheet charges) that drives band bending
         -- only Ppz contributes. Psp/P_total on GridData are still computed
@@ -356,24 +377,9 @@ def build_grid(
     m_so  = np.empty(N)
     dEv_lh = np.empty(N)
     dEv_so = np.empty(N)
+    dEv_hh = np.empty(N)
     Nc_arr = np.empty(N)
     Nv_arr = np.empty(N)
-
-    for i in range(N):
-        p = get_AlGaN_params_T(x_Al[i], T)
-        Eg[i]    = p.Eg
-        chi[i]   = p.chi
-        eps_r[i] = p.eps_r
-        m_e[i]   = p.m_e_dos
-        m_hh[i]  = p.m_hh
-        # dEv_lh/dEv_so and m_lh/m_so come from the same call: past the
-        # LH/SO character crossover (see AlGaNParams.valence_band_structure),
-        # the mass has to swap along with the energy branch, not just the
-        # offset -- fetching mass and offset separately here would silently
-        # decouple them.
-        dEv_lh[i], dEv_so[i], m_lh[i], m_so[i] = p.valence_band_structure()
-        Nc_arr[i] = p.Nc(T)
-        Nv_arr[i] = p.Nv(T)
 
     # --- Strain ---
     x_sub = float(x_Al[0])   # substrate = bottom layer composition
@@ -390,6 +396,29 @@ def build_grid(
     if np.any(has_custom):
         eps_xx[has_custom] = custom_strain_xx[has_custom]
         eps_zz[has_custom] = eps_zz_from_eps_xx(x_Al[has_custom], eps_xx[has_custom])
+
+    for i in range(N):
+        p = get_AlGaN_params_T(x_Al[i], T)
+        # Strain-dependent band edges (deformation potentials, Chuang-Chang
+        # wurtzite Hamiltonian -- see AlGaNParams.strain_band_shifts). The
+        # strain here already includes pseudomorphic, relaxed and the
+        # layer's custom_strain_xx. Ec moves by dEc and the top valence
+        # band by dEv_top, so chi -> chi - dEc and Eg -> Eg + dEc - dEv_top.
+        exx_i, ezz_i = (float(eps_xx[i]), float(eps_zz[i])) if include_strain_band_shift else (0.0, 0.0)
+        dEc_s, dEv_s = p.strain_band_shifts(exx_i, ezz_i)
+        Eg[i]    = p.Eg + dEc_s - dEv_s
+        chi[i]   = p.chi - dEc_s
+        eps_r[i] = p.eps_r
+        m_e[i]   = p.m_e_dos
+        m_hh[i]  = p.m_hh
+        # dEv_lh/dEv_so and m_lh/m_so come from the same call: past the
+        # LH/SO character crossover (see AlGaNParams.valence_band_structure),
+        # the mass has to swap along with the energy branch, not just the
+        # offset -- fetching mass and offset separately here would silently
+        # decouple them.
+        dEv_hh[i], dEv_lh[i], dEv_so[i], m_lh[i], m_so[i] = p.valence_offsets_from_top(exx_i, ezz_i)
+        Nc_arr[i] = p.Nc(T)
+        Nv_arr[i] = p.Nv(T, exx_i, ezz_i)
 
     # --- Polarization ---
     # Psp is always computed and kept on GridData for display/diagnostics.
@@ -451,9 +480,10 @@ def build_grid(
     if bottom_contact.contact_type == 'ohmic':
         def charge_imbalance_bottom(Ec0_guess: float) -> float:
             Ev0_guess = Ec0_guess - Eg[0]
-            Ed_0 = 0.02
+            Ed_0 = donor_ionization_energy(x_Al[0])
+            Ea_0 = acceptor_ionization_energy(x_Al[0])
             Nd_plus = ND[0] / (1.0 + 2.0 * np.exp((0.0 - (Ec0_guess - Ed_0)) / kBT_eV))
-            Na_minus = NA[0] / (1.0 + 4.0 * np.exp((Ev0_guess + 0.17 - 0.0) / kBT_eV))
+            Na_minus = NA[0] / (1.0 + 4.0 * np.exp((Ev0_guess + Ea_0 - 0.0) / kBT_eV))
             n = float(electron_density(Ec0_guess, 0.0, Nc_arr[0], T))
             p = float(hole_density(Ev0_guess, 0.0, Nv_arr[0], T))
             return (Nd_plus - Na_minus) + p - n
@@ -468,9 +498,7 @@ def build_grid(
             Ec0_bottom = 0.0
     else:
         # Schottky: Ec = Ef + phi_B at contact
-        from physics.materials.metals import get_work_function
-        phi_M = get_work_function(bottom_contact.metal)
-        phi_B = phi_M - chi[0]   # Schottky barrier height [eV]
+        phi_B = _schottky_barrier(bottom_contact, chi[0])   # [eV]
         Ec0_bottom = phi_B       # Ec measured from Ef=0
 
     # Ec0 profile via Anderson's rule: Ec0(x) = Ec0_bottom + (chi[0] - chi(x))
@@ -486,9 +514,10 @@ def build_grid(
     if top_contact.contact_type == 'ohmic':
         def charge_imbalance_top(Ec_top_guess: float) -> float:
             Ev_top_guess = Ec_top_guess - Eg[-1]
-            Ed_top = 0.02
+            Ed_top = donor_ionization_energy(x_Al[-1])
+            Ea_top = acceptor_ionization_energy(x_Al[-1])
             Nd_plus = ND[-1] / (1.0 + 2.0 * np.exp((0.0 - (Ec_top_guess - Ed_top)) / kBT_eV))
-            Na_minus = NA[-1] / (1.0 + 4.0 * np.exp((Ev_top_guess + 0.17 - 0.0) / kBT_eV))
+            Na_minus = NA[-1] / (1.0 + 4.0 * np.exp((Ev_top_guess + Ea_top - 0.0) / kBT_eV))
             n = float(electron_density(Ec_top_guess, 0.0, Nc_arr[-1], T))
             p = float(hole_density(Ev_top_guess, 0.0, Nv_arr[-1], T))
             return (Nd_plus - Na_minus) + p - n
@@ -504,9 +533,7 @@ def build_grid(
             
         phi_top_eq = Ec0[-1] - Ec_top
     else:
-        from physics.materials.metals import get_work_function
-        phi_M  = get_work_function(top_contact.metal)
-        phi_B  = phi_M - chi[-1]
+        phi_B  = _schottky_barrier(top_contact, chi[-1])
         phi_top_eq = Ec0[-1] - phi_B
 
     return GridData(
@@ -514,7 +541,7 @@ def build_grid(
         x_Al=x_Al,
         Ec0=Ec0, Ev0=Ev0, Eg=Eg, chi=chi,
         eps_r=eps_r, m_e=m_e, m_hh=m_hh, m_lh=m_lh, m_so=m_so,
-        dEv_lh=dEv_lh, dEv_so=dEv_so,
+        dEv_lh=dEv_lh, dEv_so=dEv_so, dEv_hh=dEv_hh,
         ND=ND, NA=NA,
         Nc=Nc_arr, Nv=Nv_arr,
         eps_xx=eps_xx, eps_zz=eps_zz,

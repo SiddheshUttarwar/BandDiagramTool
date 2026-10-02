@@ -1,0 +1,186 @@
+global{
+    simulate1D{}
+    crystal_wz{ x_hkl = [0, 0, 1] y_hkl = [1, 0, 0] }
+    substrate{ name = "GaN" }
+    temperature = 300
+}
+impurities{
+    donor{ name = "nd0" energy = 0.018 degeneracy = 2 }
+    acceptor{ name = "na3" energy = 0.17 degeneracy = 4 }
+    charge{ name = "qpos" type = positive }
+    charge{ name = "qneg" type = negative }
+}
+contacts{
+    ohmic{ name = "bottom" bias = 0.0 }
+    ohmic{ name = "top" bias = 0.0 }
+}
+structure{
+    region{ binary{ name = "GaN" } line{ x = [0, 50] } doping{ constant{ name = "nd0" conc = 1e+18 } } }
+    region{ ternary_linear{ name = "Al(x)Ga(1-x)N" alloy_x = [0, 0.3] x = [50, 150] } line{ x = [50, 150] } }
+    region{ ternary_linear{ name = "Al(x)Ga(1-x)N" alloy_x = [0.3, 0] x = [150, 250] } line{ x = [150, 250] } }
+    region{ binary{ name = "GaN" } line{ x = [250, 280] } doping{ constant{ name = "na3" conc = 1e+19 } } }
+    region{ line{ x = [50, 50.4] } doping{ constant{ name = "qpos" conc = 6.22684e+17 } } }
+    region{ line{ x = [50.4, 50.92] } doping{ constant{ name = "qpos" conc = 6.23515e+17 } } }
+    region{ line{ x = [50.92, 51.596] } doping{ constant{ name = "qpos" conc = 6.24596e+17 } } }
+    region{ line{ x = [51.596, 52.4748] } doping{ constant{ name = "qpos" conc = 6.26001e+17 } } }
+    region{ line{ x = [52.4748, 53.61724] } doping{ constant{ name = "qpos" conc = 6.27828e+17 } } }
+    region{ line{ x = [53.61724, 55.102412] } doping{ constant{ name = "qpos" conc = 6.30205e+17 } } }
+    region{ line{ x = [55.102412, 57.033136] } doping{ constant{ name = "qpos" conc = 6.33298e+17 } } }
+    region{ line{ x = [57.033136, 59.543076] } doping{ constant{ name = "qpos" conc = 6.37323e+17 } } }
+    region{ line{ x = [59.543076, 62.805999] } doping{ constant{ name = "qpos" conc = 6.42563e+17 } } }
+    region{ line{ x = [62.805999, 67.047799] } doping{ constant{ name = "qpos" conc = 6.49388e+17 } } }
+    region{ line{ x = [67.047799, 72.562139] } doping{ constant{ name = "qpos" conc = 6.58282e+17 } } }
+    region{ line{ x = [72.562139, 79.73078] } doping{ constant{ name = "qpos" conc = 6.69882e+17 } } }
+    region{ line{ x = [79.73078, 89.050014] } doping{ constant{ name = "qpos" conc = 6.85026e+17 } } }
+    region{ line{ x = [89.050014, 110.94999] } doping{ constant{ name = "qpos" conc = 7.13911e+17 } } }
+    region{ line{ x = [110.94999, 120.26922] } doping{ constant{ name = "qpos" conc = 7.43022e+17 } } }
+    region{ line{ x = [120.26922, 127.43786] } doping{ constant{ name = "qpos" conc = 7.58511e+17 } } }
+    region{ line{ x = [127.43786, 132.9522] } doping{ constant{ name = "qpos" conc = 7.70475e+17 } } }
+    region{ line{ x = [132.9522, 137.194] } doping{ constant{ name = "qpos" conc = 7.79709e+17 } } }
+    region{ line{ x = [137.194, 140.45692] } doping{ constant{ name = "qpos" conc = 7.8683e+17 } } }
+    region{ line{ x = [140.45692, 142.96686] } doping{ constant{ name = "qpos" conc = 7.92317e+17 } } }
+    region{ line{ x = [142.96686, 144.89759] } doping{ constant{ name = "qpos" conc = 7.96545e+17 } } }
+    region{ line{ x = [144.89759, 146.38276] } doping{ constant{ name = "qpos" conc = 7.99801e+17 } } }
+    region{ line{ x = [146.38276, 147.5252] } doping{ constant{ name = "qpos" conc = 8.02307e+17 } } }
+    region{ line{ x = [147.5252, 148.404] } doping{ constant{ name = "qpos" conc = 8.04237e+17 } } }
+    region{ line{ x = [148.404, 149.08] } doping{ constant{ name = "qpos" conc = 8.05721e+17 } } }
+    region{ line{ x = [149.08, 149.6] } doping{ constant{ name = "qpos" conc = 8.06863e+17 } } }
+    region{ line{ x = [149.6, 150] } doping{ constant{ name = "qpos" conc = 8.07742e+17 } } }
+    region{ line{ x = [150, 150.4] } doping{ constant{ name = "qneg" conc = 8.07742e+17 } } }
+    region{ line{ x = [150.4, 150.92] } doping{ constant{ name = "qneg" conc = 8.06863e+17 } } }
+    region{ line{ x = [150.92, 151.596] } doping{ constant{ name = "qneg" conc = 8.05721e+17 } } }
+    region{ line{ x = [151.596, 152.4748] } doping{ constant{ name = "qneg" conc = 8.04237e+17 } } }
+    region{ line{ x = [152.4748, 153.61724] } doping{ constant{ name = "qneg" conc = 8.02307e+17 } } }
+    region{ line{ x = [153.61724, 155.10241] } doping{ constant{ name = "qneg" conc = 7.99801e+17 } } }
+    region{ line{ x = [155.10241, 157.03314] } doping{ constant{ name = "qneg" conc = 7.96545e+17 } } }
+    region{ line{ x = [157.03314, 159.54308] } doping{ constant{ name = "qneg" conc = 7.92317e+17 } } }
+    region{ line{ x = [159.54308, 162.806] } doping{ constant{ name = "qneg" conc = 7.8683e+17 } } }
+    region{ line{ x = [162.806, 167.0478] } doping{ constant{ name = "qneg" conc = 7.79709e+17 } } }
+    region{ line{ x = [167.0478, 172.56214] } doping{ constant{ name = "qneg" conc = 7.70475e+17 } } }
+    region{ line{ x = [172.56214, 179.73078] } doping{ constant{ name = "qneg" conc = 7.58511e+17 } } }
+    region{ line{ x = [179.73078, 189.05001] } doping{ constant{ name = "qneg" conc = 7.43022e+17 } } }
+    region{ line{ x = [189.05001, 210.94999] } doping{ constant{ name = "qneg" conc = 7.13911e+17 } } }
+    region{ line{ x = [210.94999, 220.26922] } doping{ constant{ name = "qneg" conc = 6.85026e+17 } } }
+    region{ line{ x = [220.26922, 227.43786] } doping{ constant{ name = "qneg" conc = 6.69882e+17 } } }
+    region{ line{ x = [227.43786, 232.9522] } doping{ constant{ name = "qneg" conc = 6.58282e+17 } } }
+    region{ line{ x = [232.9522, 237.194] } doping{ constant{ name = "qneg" conc = 6.49388e+17 } } }
+    region{ line{ x = [237.194, 240.45692] } doping{ constant{ name = "qneg" conc = 6.42563e+17 } } }
+    region{ line{ x = [240.45692, 242.96686] } doping{ constant{ name = "qneg" conc = 6.37323e+17 } } }
+    region{ line{ x = [242.96686, 244.89759] } doping{ constant{ name = "qneg" conc = 6.33298e+17 } } }
+    region{ line{ x = [244.89759, 246.38276] } doping{ constant{ name = "qneg" conc = 6.30205e+17 } } }
+    region{ line{ x = [246.38276, 247.5252] } doping{ constant{ name = "qneg" conc = 6.27828e+17 } } }
+    region{ line{ x = [247.5252, 248.404] } doping{ constant{ name = "qneg" conc = 6.26001e+17 } } }
+    region{ line{ x = [248.404, 249.08] } doping{ constant{ name = "qneg" conc = 6.24596e+17 } } }
+    region{ line{ x = [249.08, 249.6] } doping{ constant{ name = "qneg" conc = 6.23515e+17 } } }
+    region{ line{ x = [249.6, 250] } doping{ constant{ name = "qneg" conc = 6.22684e+17 } } }
+    region{ contact{ name = "bottom" } line{ x = [0, 0.4] } }
+    region{ contact{ name = "top" } line{ x = [279.6, 280] } }
+}
+grid{
+    xgrid{
+        line{ pos = 0 spacing = 0.4 }
+        line{ pos = 0.4 spacing = 0.52 }
+        line{ pos = 0.92 spacing = 0.676 }
+        line{ pos = 1.596 spacing = 0.8788 }
+        line{ pos = 2.4748 spacing = 1.14244 }
+        line{ pos = 3.61724 spacing = 1.48517 }
+        line{ pos = 5.10241 spacing = 1.93072 }
+        line{ pos = 7.03314 spacing = 2.50994 }
+        line{ pos = 9.54308 spacing = 3.26292 }
+        line{ pos = 12.806 spacing = 4.2418 }
+        line{ pos = 17.0478 spacing = 5.51434 }
+        line{ pos = 22.5621 spacing = 4.87572 }
+        line{ pos = 27.4379 spacing = 5.51434 }
+        line{ pos = 32.9522 spacing = 4.2418 }
+        line{ pos = 37.194 spacing = 3.26292 }
+        line{ pos = 40.4569 spacing = 2.50994 }
+        line{ pos = 42.9669 spacing = 1.93072 }
+        line{ pos = 44.8976 spacing = 1.48517 }
+        line{ pos = 46.3828 spacing = 1.14244 }
+        line{ pos = 47.5252 spacing = 0.8788 }
+        line{ pos = 48.404 spacing = 0.676 }
+        line{ pos = 49.08 spacing = 0.52 }
+        line{ pos = 49.6 spacing = 0.4 }
+        line{ pos = 50 spacing = 0.4 }
+        line{ pos = 50.4 spacing = 0.52 }
+        line{ pos = 50.92 spacing = 0.676 }
+        line{ pos = 51.596 spacing = 0.8788 }
+        line{ pos = 52.4748 spacing = 1.14244 }
+        line{ pos = 53.6172 spacing = 1.48517 }
+        line{ pos = 55.1024 spacing = 1.93072 }
+        line{ pos = 57.0331 spacing = 2.50994 }
+        line{ pos = 59.5431 spacing = 3.26292 }
+        line{ pos = 62.806 spacing = 4.2418 }
+        line{ pos = 67.0478 spacing = 5.51434 }
+        line{ pos = 72.5621 spacing = 7.16864 }
+        line{ pos = 79.7308 spacing = 9.31923 }
+        line{ pos = 89.05 spacing = 21.9 }
+        line{ pos = 110.95 spacing = 9.31923 }
+        line{ pos = 120.269 spacing = 7.16864 }
+        line{ pos = 127.438 spacing = 5.51434 }
+        line{ pos = 132.952 spacing = 4.2418 }
+        line{ pos = 137.194 spacing = 3.26292 }
+        line{ pos = 140.457 spacing = 2.50994 }
+        line{ pos = 142.967 spacing = 1.93072 }
+        line{ pos = 144.898 spacing = 1.48517 }
+        line{ pos = 146.383 spacing = 1.14244 }
+        line{ pos = 147.525 spacing = 0.8788 }
+        line{ pos = 148.404 spacing = 0.676 }
+        line{ pos = 149.08 spacing = 0.52 }
+        line{ pos = 149.6 spacing = 0.4 }
+        line{ pos = 150 spacing = 0.4 }
+        line{ pos = 150.4 spacing = 0.52 }
+        line{ pos = 150.92 spacing = 0.676 }
+        line{ pos = 151.596 spacing = 0.8788 }
+        line{ pos = 152.475 spacing = 1.14244 }
+        line{ pos = 153.617 spacing = 1.48517 }
+        line{ pos = 155.102 spacing = 1.93072 }
+        line{ pos = 157.033 spacing = 2.50994 }
+        line{ pos = 159.543 spacing = 3.26292 }
+        line{ pos = 162.806 spacing = 4.2418 }
+        line{ pos = 167.048 spacing = 5.51434 }
+        line{ pos = 172.562 spacing = 7.16864 }
+        line{ pos = 179.731 spacing = 9.31923 }
+        line{ pos = 189.05 spacing = 21.9 }
+        line{ pos = 210.95 spacing = 9.31923 }
+        line{ pos = 220.269 spacing = 7.16864 }
+        line{ pos = 227.438 spacing = 5.51434 }
+        line{ pos = 232.952 spacing = 4.2418 }
+        line{ pos = 237.194 spacing = 3.26292 }
+        line{ pos = 240.457 spacing = 2.50994 }
+        line{ pos = 242.967 spacing = 1.93072 }
+        line{ pos = 244.898 spacing = 1.48517 }
+        line{ pos = 246.383 spacing = 1.14244 }
+        line{ pos = 247.525 spacing = 0.8788 }
+        line{ pos = 248.404 spacing = 0.676 }
+        line{ pos = 249.08 spacing = 0.52 }
+        line{ pos = 249.6 spacing = 0.4 }
+        line{ pos = 250 spacing = 0.4 }
+        line{ pos = 250.4 spacing = 0.52 }
+        line{ pos = 250.92 spacing = 0.676 }
+        line{ pos = 251.596 spacing = 0.8788 }
+        line{ pos = 252.475 spacing = 1.14244 }
+        line{ pos = 253.617 spacing = 1.48517 }
+        line{ pos = 255.102 spacing = 1.93072 }
+        line{ pos = 257.033 spacing = 2.50994 }
+        line{ pos = 259.543 spacing = 3.26292 }
+        line{ pos = 262.806 spacing = 4.388 }
+        line{ pos = 267.194 spacing = 3.26292 }
+        line{ pos = 270.457 spacing = 2.50994 }
+        line{ pos = 272.967 spacing = 1.93072 }
+        line{ pos = 274.898 spacing = 1.48517 }
+        line{ pos = 276.383 spacing = 1.14244 }
+        line{ pos = 277.525 spacing = 0.8788 }
+        line{ pos = 278.404 spacing = 0.676 }
+        line{ pos = 279.08 spacing = 0.52 }
+        line{ pos = 279.6 spacing = 0.4 }
+        line{ pos = 280 spacing = 0.4 }
+    }
+}
+classical{
+    Gamma{} HH{} LH{} SO{}
+    output_bandedges{ averaged = no }
+    output_carrier_densities{}
+}
+poisson{ output_potential{} output_electric_field{} }
+run{ poisson{} }

@@ -1,79 +1,113 @@
-# The mathematics behind BandDiagramTool
+# BandDiagramTool model reference
 
-BandDiagramTool computes the band diagram, charge distribution, quantum states and current of a
-wurtzite III-nitride layer stack grown along the c-axis. These notes state every equation the
-solver uses, where each number comes from, and how well the result agrees with experiment.
-They are written for a device or epitaxy engineer who knows semiconductor physics but has not
-read the code.
+BandDiagramTool is a one-dimensional Schrödinger-Poisson-current solver for wurtzite
+Al-In-Ga-N layer stacks grown along the c-axis. This reference states the equations it solves,
+the parameters that enter them, and the algorithms that couple them.
 
-## What the tool solves
+It is organised by physical model, in the same order the program evaluates them. Equations are
+numbered by chapter, so (5.4) is the fourth equation of chapter 5.
 
-One spatial dimension, z, along the growth direction, from the substrate (bottom, z = 0) to the
-surface (top). The unknowns at every grid point are
+## Chapters
 
-- the electrostatic potential $\phi(z)$,
-- the electron and hole quasi-Fermi levels $E_{Fn}(z)$, $E_{Fp}(z)$,
-- optionally, the confined electron and hole states $\{E_k, \psi_k(z)\}$ of a quantum region.
-
-Three coupled equations determine them:
-
-| Equation | Unknown | Document |
+| # | Chapter | Contents |
 |---|---|---|
-| Poisson, with polarization charge | $\phi$ | [05](05_poisson_equilibrium.md) |
-| Schrödinger, effective mass | $E_k$, $\psi_k$ | [06](06_schrodinger_quantum.md) |
-| Electron and hole continuity (drift-diffusion) | $E_{Fn}$, $E_{Fp}$ | [07](07_drift_diffusion_bias.md) |
+| 1 | [Structure and grid](01_structure_and_grid.md) | layers, contacts, coordinates, finite-volume grid |
+| 2 | [Materials](02_materials.md) | interpolation schemes, band gaps, band offsets, masses, parameter database |
+| 3 | [Strain](03_strain.md) | strain tensor, pseudomorphic solution, band-edge shifts |
+| 4 | [Polarization](04_polarization.md) | pyroelectric and piezoelectric polarization, interface and volume charge |
+| 5 | [Electrostatics](05_electrostatics.md) | Poisson equation, classical charge densities, doping, surface states, boundary conditions |
+| 6 | [Quantum mechanics](06_quantum.md) | envelope-function Schrödinger equation, quantum charge densities |
+| 7 | [Currents](07_currents.md) | drift-diffusion, mobility, generation-recombination, discretised flux |
+| 8 | [Optics](08_optics.md) | transition energies, overlap, gain spectrum |
+| 9 | [Solution algorithms](09_solution_algorithms.md) | the four solve modes and how each one iterates |
+| 10 | [Validation](10_validation.md) | comparison with nextnano++ and with 102 published experiments |
+| 11 | [Limits and comparison with nextnano++](11_limits_and_comparison.md) | what is not modelled; feature-by-feature comparison |
 
-At zero bias the quasi-Fermi levels are flat and equal, and only Poisson (plus Schrödinger) is solved.
+## Program flow
 
-## Reading order
+```
+ layer stack + contacts
+        |
+        v
+ 1. grid                                     chapter 1
+ 2. material parameters at every node        chapter 2
+ 3. strain  ->  band-edge shifts             chapter 3
+ 4. polarization  ->  fixed charge           chapter 4
+        |
+        v
+ 5. self-consistent loop                     chapter 9
+      Poisson            phi                 chapter 5
+      Schrodinger        E_k, psi_k          chapter 6   (quantum modes)
+      current equation   E_Fn, E_Fp          chapter 7   (biased modes)
+        |
+        v
+ 6. post-processing: sheet densities, fields,
+    transition energies, overlap, gain       chapter 8
+```
 
-1. [Device model, grid and energy reference](01_device_model_and_grid.md)
-2. [Material model: Al(x)In(y)Ga(1-x-y)N](02_material_model.md)
-3. [Strain, polarization and strained band edges](03_strain_and_polarization.md)
-4. [Carrier statistics and dopant ionization](04_carrier_statistics.md)
-5. [Poisson equation and the equilibrium solve](05_poisson_equilibrium.md)
-6. [Schrödinger equation and quantum charge](06_schrodinger_quantum.md)
-7. [Drift-diffusion and the biased solve](07_drift_diffusion_bias.md)
-8. [Optical outputs: transition energy, overlap, gain](08_optical_outputs.md)
-9. [Validation against nextnano++ and 102 papers](09_validation.md)
-10. [Assumptions and limits](10_assumptions_and_limits.md)
+Steps 1-4 are evaluated once. They depend only on the structure and the temperature. Step 5 is
+the only iterative part.
 
-## Notation and units
+## Unknowns and the equations that determine them
 
-| Symbol | Meaning | Unit in these notes |
+| Unknown | Symbol | Determined by |
 |---|---|---|
-| $z$ | position along growth direction, 0 at the substrate side | nm |
-| $x$, $y$ | Al and In mole fractions of Al$_x$In$_y$Ga$_{1-x-y}$N | - |
+| electrostatic potential | $\phi(z)$ | Poisson equation (5.1) |
+| electron and hole quasi-Fermi levels | $E_{Fn}(z)$, $E_{Fp}(z)$ | current equations (7.3) |
+| subband energies and envelope functions | $E_k$, $\psi_k(z)$ | Schrödinger equation (6.1) |
+
+The carrier densities are not independent unknowns. They are functions of the others,
+
+$$
+n = n(z;\ \phi,\ E_{Fn}), \qquad p = p(z;\ \phi,\ E_{Fp}),
+$$
+
+evaluated classically (5.4)-(5.5) or quantum mechanically (6.7)-(6.8). Keeping this dependence in
+view makes each algorithm in chapter 9 easy to read: every step holds some arguments fixed and
+solves one equation for the remaining one.
+
+## Solve modes
+
+| Mode | Call | Equations solved |
+|---|---|---|
+| Poisson | `solve(V_applied=0, quantum=False)` | (5.1) |
+| Schrödinger-Poisson | `solve(V_applied=0, quantum=True)` | (5.1), (6.1) |
+| Current-Poisson | `solve(V_applied=V, quantum=False)` | (5.1), (7.3) |
+| Schrödinger-current-Poisson | `solve(V_applied=V, quantum=True)` | (5.1), (6.1), (7.3) |
+| Flat quasi-Fermi levels under bias | `solve(V_applied=V, flat_qfl=True)` | (5.1), optionally (6.1) |
+
+## Conventions
+
+| Symbol | Meaning | Unit |
+|---|---|---|
+| $z$ | position along the growth axis, 0 at the substrate side | nm |
+| $x$, $y$ | Al and In mole fractions in Al$_x$In$_y$Ga$_{1-x-y}$N | - |
 | $\phi$ | electrostatic potential | V |
-| $E_c$, $E_v$ | conduction and topmost valence band edge | eV |
-| $E_{Fn}$, $E_{Fp}$ | electron and hole quasi-Fermi levels | eV |
-| $n$, $p$ | electron and hole density | cm$^{-3}$ |
-| $N_D$, $N_A$ | donor (Si) and acceptor (Mg) concentration | cm$^{-3}$ |
-| $P$ | polarization, $P_{sp} + P_{pz}$ | C/m$^2$ |
-| $\varepsilon_{xx}$, $\varepsilon_{zz}$ | in-plane and out-of-plane strain | - |
-| $\varepsilon_r$ | relative permittivity along c | - |
-| $q$ | elementary charge (positive) | C |
-| $k_BT$ | thermal energy | eV |
+| $E_c$, $E_v$ | conduction band edge and topmost valence band edge | eV |
+| $n$, $p$, $N_D$, $N_A$ | carrier and dopant densities | cm$^{-3}$ |
+| $P$ | polarization | C/m$^2$ |
+| $\varepsilon_{ij}$ | strain tensor | - |
+| $\varepsilon_r$ | static relative permittivity along c | - |
+| $q$ | elementary charge, positive | C |
 
-Sign conventions used throughout:
-
-- **Growth is metal-polar (Ga-face, [0001]).** Spontaneous polarization is negative.
-- **Energies are electron energies.** A positive potential lowers the bands: $E_c = E_{c0} - \phi$.
-- **The Fermi level is the zero of energy at equilibrium.**
-- **Forward bias is positive** and is applied to the top contact.
+- **Polarity.** Metal-polar (Ga-face) growth: the $+z$ axis is the crystal [0001] direction.
+- **Energy.** Electron energies. A positive potential lowers the bands, $E_c = E_{c,0} - q\phi$.
+  With energies in eV and potential in V the factor $q$ is numerically 1 and is omitted below.
+- **Reference.** At equilibrium the Fermi level is the zero of energy.
+- **Bias.** Positive $V$ is forward bias, applied to the top contact.
+- **Internal units.** SI, except densities in cm$^{-3}$ and energies in eV.
 
 ## Source files
 
-| Topic | File |
+| Model | File |
 |---|---|
-| Layers, contacts | `devices/layer.py` |
-| Grid and material profiles | `devices/grid_builder.py`, `physics/grid_utils.py` |
-| Material parameters | `physics/materials/algan.py`, `physics/materials/nitrides.py`, `physics/materials/metals.py` |
+| Structure | `devices/layer.py`, `devices/device.py` |
+| Grid and node profiles | `devices/grid_builder.py`, `physics/grid_utils.py` |
+| Materials | `physics/materials/algan.py`, `nitrides.py`, `metals.py` |
 | Strain and polarization | `physics/polarization.py` |
-| Fermi-Dirac statistics | `physics/fermi_dirac.py` |
+| Carrier statistics | `physics/fermi_dirac.py` |
 | Poisson | `physics/poisson.py` |
 | Schrödinger | `physics/schrodinger.py` |
-| Equilibrium and outer loops | `physics/self_consistent.py` |
-| Biased drift-diffusion Newton solver | `physics/dd_newton.py`, `physics/drift_diffusion.py` |
-| Optical diagnostics | `physics/optical.py`, `physics/gain.py` |
-| Mott density (display only) | `physics/mott.py` |
+| Current | `physics/dd_newton.py`, `physics/drift_diffusion.py` |
+| Algorithms | `physics/self_consistent.py` |
+| Optics | `physics/optical.py`, `physics/gain.py` |

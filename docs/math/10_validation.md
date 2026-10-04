@@ -15,8 +15,8 @@ numerics differ:
 |---|---|
 | band edges | about 10 meV (12-23 meV for the In-containing structures) |
 | 2DEG and 2DHG sheet densities | 0-3% |
-| ground subband of an Al$_{0.3}$Ga$_{0.7}$N/GaN well | $-122.3$ vs $-121.3$ meV |
-| 2DEG density of the same structure, quantum | $1.229\times10^{13}$ vs $1.234\times10^{13}$ cm$^{-2}$ |
+| ground subband of an Al<sub>0.3</sub>Ga<sub>0.7</sub>N/GaN well | $`-122.3`$ vs $`-121.3`$ meV |
+| 2DEG density of the same structure, quantum | $`1.229\times10^{13}`$ vs $`1.234\times10^{13}`$ cm<sup>−2</sup> |
 
 **Default parameters.** With each code using its own database, the mean agreement score over the
 eight AlGaN devices is 7.9/10. The remaining differences are parameter choices, not numerics.
@@ -30,10 +30,10 @@ settings at 300 K and zero bias.
 
 | Unknown | Rule |
 |---|---|
-| surface barrier | the paper's value if stated; otherwise $0.84 + 1.3x$ eV (Ambacher 2000) |
+| surface barrier | the paper's value if stated; otherwise $`0.84 + 1.3x`$ eV (Ambacher 2000) |
 | GaN-capped surface | 0.84 eV |
 | insulating AlN or Al-rich buffer | Fermi level at mid-gap |
-| unintentionally doped GaN buffer | $N_D = 10^{16}$ cm$^{-3}$ |
+| unintentionally doped GaN buffer | $`N_D = 10^{16}`$ cm<sup>−3</sup> |
 | measurement below 77 K | simulated at 77 K |
 
 No parameter was adjusted for any individual paper.
@@ -82,14 +82,14 @@ before.
 
 | Model | Deviation | Probable cause |
 |---|---|---|
-| 5.6 surface boundary | 2DEG overestimated 2-5x for barriers below 3 nm (AlN at 2-2.5 nm, Al$_{0.72}$Ga$_{0.28}$N at 2.5 nm) | fixed surface barrier; conduction/valence split of the AlN deformation potentials |
+| 5.6 surface boundary | 2DEG overestimated 2-5x for barriers below 3 nm (AlN at 2-2.5 nm, Al<sub>0.72</sub>Ga<sub>0.28</sub>N at 2.5 nm) | fixed surface barrier; conduction/valence split of the AlN deformation potentials |
 | 4, 5 | 2DEG about 19% high overall | ideal surface, no buffer traps, piezoelectric constants at the high end of the literature |
 | 2.2 band gap | mid-composition AlGaN gap about 0.1 eV high | bowing 0.7 eV; measurements favour about 1.0 eV |
-| 2.2 band gap | low-temperature optical data off by 60-110 meV | no $E_g(T)$ |
+| 2.2 band gap | low-temperature optical data off by 60-110 meV | no $`E_g(T)`$ |
 | 2.3 offsets | InN-containing offsets off by 0.1-0.45 eV | the measurements themselves span 0.5 eV |
 | 6 quantum | intersubband energies 60-120 meV high | parabolic conduction band |
 | 6, 8 | emission of 1-3 monolayer GaN/AlN wells 0.45-0.65 eV low | envelope-function approximation not valid |
-| 8 optics | zero-bias $E_{11}$ of Al-rich wells 0.5 eV below electroluminescence | field screening under injection; $O_{11} < 1\%$ |
+| 8 optics | zero-bias $`E_{11}`$ of Al-rich wells 0.5 eV below electroluminescence | field screening under injection; $`O_{11} \lt 1\%`$ |
 | 4 polarization | GaN/AlGaN quantum-well fields 1.7x the optically extracted value | long-standing gap between polarization theory and QW optics |
 | 5.6 contacts | Pt barrier 0.5 eV high | Schottky-Mott rule, no pinning |
 
@@ -98,7 +98,7 @@ before.
 | Use | Applies to |
 |---|---|
 | directly | sheet densities for barriers of 4 nm or more; hole gases; polarization charge; InGaN well fields; critical barrier thickness; carrier concentrations from Si and Mg doping |
-| with a correction | emission energies (subtract exciton binding; add 60-110 meV for low temperature); AlGaN gaps near $x = 0.5$ (about 0.1 eV lower); intersubband energies (60-120 meV lower) |
+| with a correction | emission energies (subtract exciton binding; add 60-110 meV for low temperature); AlGaN gaps near $`x = 0.5`$ (about 0.1 eV lower); intersubband energies (60-120 meV lower) |
 | not at all | absolute 2DEG density below 3 nm barrier thickness; monolayer wells; zero-bias transition energy as a stand-in for electroluminescence of wide Al-rich wells; Pt barriers from the default metal model |
 
 ## 10.5 Limits of the validation

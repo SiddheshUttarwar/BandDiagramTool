@@ -52,15 +52,15 @@ the only iterative part.
 
 | Unknown | Symbol | Determined by |
 |---|---|---|
-| electrostatic potential | $\phi(z)$ | Poisson equation (5.1) |
-| electron and hole quasi-Fermi levels | $E_{Fn}(z)$, $E_{Fp}(z)$ | current equations (7.3) |
-| subband energies and envelope functions | $E_k$, $\psi_k(z)$ | Schrödinger equation (6.1) |
+| electrostatic potential | $`\phi(z)`$ | Poisson equation (5.1) |
+| electron and hole quasi-Fermi levels | $`E_{Fn}(z)`$, $`E_{Fp}(z)`$ | current equations (7.3) |
+| subband energies and envelope functions | $`E_k`$, $`\psi_k(z)`$ | Schrödinger equation (6.1) |
 
 The carrier densities are not independent unknowns. They are functions of the others,
 
-$$
+```math
 n = n(z;\ \phi,\ E_{Fn}), \qquad p = p(z;\ \phi,\ E_{Fp}),
-$$
+```
 
 evaluated classically (5.4)-(5.5) or quantum mechanically (6.7)-(6.8). Keeping this dependence in
 view makes each algorithm in chapter 9 easy to read: every step holds some arguments fixed and
@@ -80,22 +80,22 @@ solves one equation for the remaining one.
 
 | Symbol | Meaning | Unit |
 |---|---|---|
-| $z$ | position along the growth axis, 0 at the substrate side | nm |
-| $x$, $y$ | Al and In mole fractions in Al$_x$In$_y$Ga$_{1-x-y}$N | - |
-| $\phi$ | electrostatic potential | V |
-| $E_c$, $E_v$ | conduction band edge and topmost valence band edge | eV |
-| $n$, $p$, $N_D$, $N_A$ | carrier and dopant densities | cm$^{-3}$ |
-| $P$ | polarization | C/m$^2$ |
-| $\varepsilon_{ij}$ | strain tensor | - |
-| $\varepsilon_r$ | static relative permittivity along c | - |
-| $q$ | elementary charge, positive | C |
+| $`z`$ | position along the growth axis, 0 at the substrate side | nm |
+| $`x`$, $`y`$ | Al and In mole fractions in Al<sub>x</sub>In<sub>y</sub>Ga<sub>1−x−y</sub>N | - |
+| $`\phi`$ | electrostatic potential | V |
+| $`E_c`$, $`E_v`$ | conduction band edge and topmost valence band edge | eV |
+| $`n`$, $`p`$, $`N_D`$, $`N_A`$ | carrier and dopant densities | cm<sup>−3</sup> |
+| $`P`$ | polarization | C/m<sup>2</sup> |
+| $`\varepsilon_{ij}`$ | strain tensor | - |
+| $`\varepsilon_r`$ | static relative permittivity along c | - |
+| $`q`$ | elementary charge, positive | C |
 
-- **Polarity.** Metal-polar (Ga-face) growth: the $+z$ axis is the crystal [0001] direction.
-- **Energy.** Electron energies. A positive potential lowers the bands, $E_c = E_{c,0} - q\phi$.
-  With energies in eV and potential in V the factor $q$ is numerically 1 and is omitted below.
+- **Polarity.** Metal-polar (Ga-face) growth: the $`+z`$ axis is the crystal [0001] direction.
+- **Energy.** Electron energies. A positive potential lowers the bands, $`E_c = E_{c,0} - q\phi`$.
+  With energies in eV and potential in V the factor $`q`$ is numerically 1 and is omitted below.
 - **Reference.** At equilibrium the Fermi level is the zero of energy.
-- **Bias.** Positive $V$ is forward bias, applied to the top contact.
-- **Internal units.** SI, except densities in cm$^{-3}$ and energies in eV.
+- **Bias.** Positive $`V`$ is forward bias, applied to the top contact.
+- **Internal units.** SI, except densities in cm<sup>−3</sup> and energies in eV.
 
 ## Source files
 

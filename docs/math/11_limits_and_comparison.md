@@ -6,7 +6,7 @@
 |---|---|---|
 | Geometry | one dimension along the growth axis; laterally uniform | 1 |
 | Crystal | wurtzite Al-In-Ga-N, metal-polar c-plane | 2, 4 |
-| Temperature | uniform; only $k_BT$ and $P_{sp}$ depend on it | 2, 4 |
+| Temperature | uniform; only $`k_BT`$ and $`P_{sp}`$ depend on it | 2, 4 |
 | Strain | coherent to the bottom layer; biaxial; linear elasticity | 3 |
 | Polarization | linear piezoelectricity; fixed bound charge | 4 |
 | Statistics | Fermi-Dirac; one donor and one acceptor level; all dopants active | 5 |
@@ -63,20 +63,20 @@ the nextnano++ model reference.
 | Materials | group IV, III-V, II-VI; zincblende and wurtzite; database editable | wurtzite Al-In-Ga-N; parameters in source |
 | Crystal orientation | arbitrary, by Miller indices | c-plane, metal-polar |
 | Alloy interpolation | linear, quadratic and cubic schemes; alloys of up to eight components | linear with pairwise bowing; three components |
-| Band-offset definition | average valence-band energy $E_{v,av}$ per material | top valence-band energy per material, (2.4) |
+| Band-offset definition | average valence-band energy $`E_{v,av}`$ per material | top valence-band energy per material, (2.4) |
 | Band gap vs temperature | Varshni parameters in the database | none |
 | Strain | analytic pseudomorphic solution, or numerical minimisation of elastic energy | analytic pseudomorphic solution (3.5); per-layer override |
 | Polarization | pyroelectric and piezoelectric, any orientation | pyroelectric and piezoelectric, c-axis component (4.5) |
 | Poisson equation | nonlinear, classical or quantum densities | same, (5.1) |
-| Classical densities | Fermi-Dirac, summed over all conduction valleys and valence bands | Fermi-Dirac, $\Gamma$ valley and three valence bands, (5.4)-(5.7) |
-| Doping | several species per region, incomplete ionization, $g_D = 2$, $g_A = 4$ | one donor and one acceptor, same ionization formula (5.8) |
+| Classical densities | Fermi-Dirac, summed over all conduction valleys and valence bands | Fermi-Dirac, $`\Gamma`$ valley and three valence bands, (5.4)-(5.7) |
+| Doping | several species per region, incomplete ionization, $`g_D = 2`$, $`g_A = 4`$ | one donor and one acceptor, same ionization formula (5.8) |
 | Surface | Schottky barrier, fixed surface charge, surface states | Schottky barrier, surface states (5.11), fixed dipole |
 | Quantum model | single-band and multi-band k·p (6- and 8-band) | single-band, (6.1) |
 | Quantum density | analytic for single-band; k-space integration for k·p | analytic, (6.6)-(6.8) |
 | Current model | drift-diffusion in quasi-Fermi-level form | same, (7.2) |
 | Mobility | several models (constant, doping-dependent, high-field) | constant, linear in composition |
-| Recombination | SRH with doping-dependent lifetimes, radiative, Auger with separate $C_n$, $C_p$, optical generation | SRH, radiative, Auger with fixed coefficients (7.5)-(7.7) |
-| Coupling of current and Poisson | decoupled iteration: Poisson at fixed quasi-Fermi levels, then current equation | fully coupled Newton on $(\phi, E_{Fn}, E_{Fp})$, (9.4) |
+| Recombination | SRH with doping-dependent lifetimes, radiative, Auger with separate $`C_n`$, $`C_p`$, optical generation | SRH, radiative, Auger with fixed coefficients (7.5)-(7.7) |
+| Coupling of current and Poisson | decoupled iteration: Poisson at fixed quasi-Fermi levels, then current equation | fully coupled Newton on $`(\phi, E_{Fn}, E_{Fp})`$, (9.4) |
 | Optical spectra | semiclassical spectra; k·p absorption and gain; excitons | transition energies and overlap; band-edge gain (8.4) |
 
 **Where the two give the same answer.** Band diagrams, sheet densities and single-band subband

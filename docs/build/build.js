@@ -1,4 +1,6 @@
 // Build the static documentation site (docs/*.html) from docs/math/*.md.
+// The Markdown sources in docs/math/ are kept out of the repository (see
+// .gitignore): GitHub renders their equations incorrectly. Keep a backup.
 //
 //   cd docs/build && npm install && node build.js
 //
@@ -152,7 +154,7 @@ ${nav}
 ${body}
 </article>
 ${pager}
-<footer>Generated from <a href="${REPO}/tree/main/docs/math">docs/math</a>. Equations are typeset at build time with MathJax.</footer>
+<footer>Equations are typeset at build time with MathJax.</footer>
 </main>
 </div>
 <script>

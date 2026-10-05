@@ -29,3 +29,6 @@ pyinstaller_rebuild.log
 
 # Docs site build dependencies (cd docs/build && npm install)
 /docs/build/node_modules/
+
+# Markdown sources of the docs site: local only (GitHub mis-renders the math)
+/docs/math/

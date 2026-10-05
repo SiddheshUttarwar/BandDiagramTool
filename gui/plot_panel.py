@@ -25,6 +25,7 @@ SolverResult rather than reloading and re-parsing that CSV.
 from __future__ import annotations
 
 import os
+import sys
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -76,7 +77,11 @@ matplotlib.rcParams.update({
 
 _trapz = getattr(np, "trapezoid", None) or np.trapz
 
-_RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
+# Solved results are written as CSV to a "results" folder: beside the .exe
+# in the packaged program, in the repository otherwise.
+_BASE_DIR = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+             else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_RESULTS_DIR = os.path.join(_BASE_DIR, "results")
 _DEFAULT_PROJECT_NAME = "untitled"
 
 _PANELS = [

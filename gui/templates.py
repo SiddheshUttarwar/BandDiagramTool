@@ -36,6 +36,30 @@ def _hemt() -> DeviceModel:
     return m
 
 
+def _xhemt() -> DeviceModel:
+    """AlN/GaN/AlN XHEMT on single-crystal AlN: Kim et al., arXiv:2506.16670
+    (2025). 500 nm AlN buffer, 20 nm coherently strained GaN channel with a
+    sheet of 5e13 cm^-2 Si donors 1 nm above its lower interface, 6 nm AlN
+    barrier, 1 nm GaN cap. The surface barrier is not given in the paper;
+    1.0 eV is assumed."""
+    m = DeviceModel()
+    m.layers = [AbruptLayer(x_Al=1.0, thickness_nm=480),
+                QuantumRegionMarker('start'),
+                AbruptLayer(x_Al=1.0, thickness_nm=20, dx_nm=0.2),
+                AbruptLayer(x_Al=0.0, thickness_nm=1, dx_nm=0.1),
+                AbruptLayer(x_Al=0.0, thickness_nm=1, n_doping=5e20, dx_nm=0.1),   # Si delta-doping, 5e13 cm^-2
+                AbruptLayer(x_Al=0.0, thickness_nm=18, dx_nm=0.1),
+                AbruptLayer(x_Al=1.0, thickness_nm=6, dx_nm=0.1),
+                AbruptLayer(x_Al=0.0, thickness_nm=1, dx_nm=0.1),
+                QuantumRegionMarker('end')]
+    # undoped AlN below: Fermi level near mid-gap
+    m.bottom_contact = Contact('bottom', 'schottky', 'Ni', barrier_eV=3.0)
+    m.top_contact = Contact('top', 'schottky', 'Ni', barrier_eV=1.0)
+    m.settings.dx_nm = 1.0
+    m.settings.quantum = True
+    return m
+
+
 def _stark_well() -> DeviceModel:
     m = DeviceModel()
     m.layers = [AbruptLayer(x_Al=1.0, thickness_nm=60),
@@ -93,6 +117,10 @@ TEMPLATES: List[Template] = [
              "25 nm Al₀.₃Ga₀.₇N barrier on GaN. Polarization-induced "
              "two-dimensional electron gas with quantized subbands.",
              ("2DEG", "Schrödinger–Poisson"), _hemt),
+    Template("xhemt", "AlN/GaN/AlN XHEMT",
+             "20 nm strained GaN channel between AlN on an AlN substrate, with Si "
+             "δ-doping that removes the hole gas (Kim et al., 2025).",
+             ("2DEG", "AlN substrate"), _xhemt),
     Template("stark", "GaN/AlN quantum well",
              "2.6 nm GaN well in AlN. Built-in field of several MV/cm, "
              "Stark-shifted transition and electron–hole overlap.",

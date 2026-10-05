@@ -8,10 +8,32 @@ charge, electron and hole densities, confined states, quantum-well transition en
 bias, the drift-diffusion current. It can also simulate the X-ray reciprocal space map of the
 strain profile and the band diagram under illumination.
 
-![BandDiagramTool desktop](docs/assets/gui.png)
+![BandDiagramTool with a simulated AlN/GaN/AlN XHEMT](docs/assets/gui.png)
+
+*The AlN/GaN/AlN XHEMT of Kim et al. (arXiv:2506.16670), from File ▸ New from Template: the
+electron gas at the upper GaN/AlN interface, with the hole gas at the lower one removed by the
+Si δ-doping.*
+
+## Download for Windows
+
+**[Download BandDiagramTool-windows.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/BandDiagramTool-windows.zip)** (about 97 MB)
+
+No Python and no installation needed:
+
+1. Download the zip and extract it anywhere.
+2. Open the `BandDiagramTool` folder and run `BandDiagramTool.exe`. Keep the `_internal` folder
+   beside it.
+3. Start with **File ▸ New from Template**.
+
+For 64-bit Windows 10 or 11. The program is not code-signed, so Windows may show "Windows
+protected your PC" the first time: choose **More info**, then **Run anyway**. Solved results are
+written as CSV to a `results` folder beside the `.exe`. Everything under
+[Using the GUI](#using-the-gui) applies; the command-line scripts and the Python API need the
+source install below.
 
 ## Contents
 
+- [Download for Windows](#download-for-windows)
 - [The mathematics](#the-mathematics)
 - [What it is, and what it is not](#what-it-is-and-what-it-is-not)
 - [Install](#install)
@@ -44,16 +66,10 @@ and the validation results, one chapter per topic:
 | [9. Solution algorithms](https://siddheshuttarwar.github.io/BandDiagramTool/09_solution_algorithms.html) | how the coupled equations are solved |
 | [10. Validation](https://siddheshuttarwar.github.io/BandDiagramTool/10_validation.html) | comparison with nextnano++ and with 102 published experiments |
 | [11. Limits](https://siddheshuttarwar.github.io/BandDiagramTool/11_limits_and_comparison.html) | what is left out, and a feature-by-feature comparison with nextnano++ |
-| [A. Benchmark tables](https://siddheshuttarwar.github.io/BandDiagramTool/12_benchmark_tables.html) | every paper with its measured and computed value |
-
-Three newer modules are not yet in the model reference. Their equations, sources and limits are
-written out in the docstring at the top of each file:
-
-| Module | Covers |
-|---|---|
-| [`physics/rsm.py`](physics/rsm.py) | kinematical X-ray reciprocal space map from the strain profile |
-| [`physics/illumination.py`](physics/illumination.py) | band diagram under light through the top surface, at open circuit |
-| [`physics/dqfl.py`](physics/dqfl.py) | compensating-defect reduction by light during growth |
+| [12. Reciprocal space map](https://siddheshuttarwar.github.io/BandDiagramTool/12_reciprocal_space_map.html) | X-ray map from the strain profile, relaxation, comparison with a measured map |
+| [13. Bands under illumination](https://siddheshuttarwar.github.io/BandDiagramTool/13_bands_under_illumination.html) | absorption, generation, the open-circuit solution and photovoltage |
+| [14. Defects under illumination](https://siddheshuttarwar.github.io/BandDiagramTool/14_defects_under_illumination.html) | compensating-defect reduction by light during growth, compared with experiment |
+| [A. Benchmark tables](https://siddheshuttarwar.github.io/BandDiagramTool/15_benchmark_tables.html) | every paper with its measured and computed value |
 
 ## What it is, and what it is not
 
@@ -67,7 +83,8 @@ lists what is left out.
 
 ## Install
 
-Python 3.10 or newer (developed on 3.11, Windows).
+To run from source (needed for the command line and for Python scripts): Python 3.10 or newer
+(developed on 3.11, Windows).
 
 ```
 git clone https://github.com/SiddheshUttarwar/BandDiagramTool.git
@@ -102,6 +119,7 @@ The quickest start is **File ▸ New from Template**, which loads a complete dev
 | Template | What it is |
 |---|---|
 | AlGaN/GaN HEMT | 25 nm Al₀.₃Ga₀.₇N on GaN; polarization-induced electron gas |
+| AlN/GaN/AlN XHEMT | 20 nm strained GaN channel between AlN on an AlN substrate, with Si δ-doping |
 | GaN/AlN quantum well | 2.6 nm well; built-in field and Stark shift |
 | AlGaN deep-UV LED | multiple quantum wells, blocking layer, p-type superlattice |
 | GaN p–n diode | abrupt junction at 2.9 V forward bias |
@@ -266,8 +284,8 @@ saved from the GUI.
 
 Treat the output as an estimate. It depends strongly on the lifetime and on the capture ratio,
 which is not known for these defects, and it agrees with the published measurements only to
-within a factor of two to eight. The model and its limits are in the docstring of
-[`physics/dqfl.py`](physics/dqfl.py).
+within a factor of two to eight. The model, its limits and the comparison are in
+[chapter 14](https://siddheshuttarwar.github.io/BandDiagramTool/14_defects_under_illumination.html).
 
 ## Using it from Python
 
@@ -396,7 +414,7 @@ for layer in out.layers:
 
 The [validation chapter](https://siddheshuttarwar.github.io/BandDiagramTool/10_validation.html)
 gives the method, the failures and their causes, and the
-[appendix](https://siddheshuttarwar.github.io/BandDiagramTool/12_benchmark_tables.html) lists every
+[appendix](https://siddheshuttarwar.github.io/BandDiagramTool/15_benchmark_tables.html) lists every
 paper. The benchmark was assembled with machine assistance and has not been reviewed by an
 independent expert; corrections are welcome.
 
@@ -428,6 +446,7 @@ python -m pytest -m "not slow"    # the quick subset
 | `tests/` | the test suite |
 | `docs/` | the published model reference (`docs/build/` regenerates it) |
 | `run_gui.py` | starts the GUI |
+| `BandDiagramTool.spec` | PyInstaller recipe for the Windows program: `pip install pyinstaller`, then `pyinstaller --noconfirm BandDiagramTool.spec` |
 
 ## Sources
 

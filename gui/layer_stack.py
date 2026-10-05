@@ -71,26 +71,31 @@ class _Card(QtWidgets.QFrame):
     clicked = QtCore.pyqtSignal()
     delete_requested = QtCore.pyqtSignal()
 
-    def __init__(self, title: str, subtitle: str, selected: bool, is_interface: bool):
+    def __init__(self, title: str, subtitle: str, selected: bool, is_interface: bool,
+                 swatch: Optional[str] = None):
         super().__init__()
-        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         if selected:
             bg = _CARD_BG_INTERFACE_SELECTED if is_interface else _CARD_BG_SELECTED
             border = _CARD_BORDER_SELECTED
         else:
             bg = _CARD_BG_INTERFACE if is_interface else _CARD_BG
             border = _CARD_BORDER
+        # A flat row: 1px outline, and a left bar in the layer's material
+        # colour (see theme.material_color) so the stack reads as a cross
+        # section at a glance. Marker rows have no bar.
+        bar = swatch or "transparent"
         self.setStyleSheet(
-            f"_Card {{ background-color: {bg}; border: 1.5px solid {border}; border-radius: 8px; }}")
+            f"_Card {{ background-color: {bg}; border: 1px solid {border}; "
+            f"border-left: 5px solid {bar if swatch else border}; border-radius: 0px; }}")
 
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 6, 8)
+        layout.setContentsMargins(8, 4, 4, 4)
+        layout.setSpacing(6)
 
-        handle = QtWidgets.QLabel("≡")
+        handle = QtWidgets.QLabel("⋮⋮")
+        handle.setToolTip("Drag to reorder")
         handle.setStyleSheet(f"color: {theme.TEXT_FAINT}; border: none; background: transparent;")
-        font = handle.font()
-        font.setPointSize(12)
-        handle.setFont(font)
         layout.addWidget(handle)
 
         text_col = QtWidgets.QVBoxLayout()
@@ -108,8 +113,9 @@ class _Card(QtWidgets.QFrame):
         del_btn = QtWidgets.QToolButton()
         del_btn.setText("✕")
         del_btn.setStyleSheet(
-            f"QToolButton {{ border: none; background: transparent; color: {theme.DANGER}; }}"
-            f"QToolButton:hover {{ background: {theme.DANGER_SOFT}; border-radius: 4px; }}")
+            f"QToolButton {{ border: none; background: transparent; color: {theme.TEXT_FAINT}; }}"
+            f"QToolButton:hover {{ background: {theme.DANGER_SOFT}; color: {theme.DANGER}; border-radius: 2px; }}")
+        del_btn.setToolTip("Delete this layer")
         del_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         del_btn.clicked.connect(self.delete_requested.emit)
         layout.addWidget(del_btn)
@@ -135,24 +141,15 @@ class LayerStackPanel(QtWidgets.QWidget):
         root.setContentsMargins(4, 4, 4, 4)
 
         header = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("Device Stack (bottom → top)")
-        f = title.font()
-        f.setBold(True)
-        title.setFont(f)
+        title = QtWidgets.QLabel("Surface (top)")
+        title.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         header.addWidget(title)
         header.addStretch(1)
 
         add_btn = QtWidgets.QToolButton()
-        add_btn.setText("+ Add Layer")
+        add_btn.setText("Add Layer")
         add_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        menu = QtWidgets.QMenu(add_btn)
-        menu.addAction("Abrupt layer", self._add_abrupt)
-        menu.addAction("Graded layer", self._add_graded)
-        menu.addSeparator()
-        menu.addAction("Quantum region marker", self._add_quantum_marker)
-        menu.addAction("Surface charge", self._add_surface_charge)
-        menu.addAction("Interface dipole", self._add_interface_dipole)
-        add_btn.setMenu(menu)
+        add_btn.setMenu(self.build_add_menu(add_btn))
         header.addWidget(add_btn)
         root.addLayout(header)
 
@@ -160,19 +157,38 @@ class LayerStackPanel(QtWidgets.QWidget):
         self._list.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self._list.setStyleSheet(
-            f"QListWidget {{ background: {theme.SURFACE_MUTED}; border: none; border-radius: 8px; }}")
-        self._list.setSpacing(4)
+            f"QListWidget {{ background: {theme.SURFACE}; border: 1px solid {theme.BORDER}; }}")
+        self._list.setSpacing(1)
         self._list.model().rowsMoved.connect(self._on_rows_moved)
         root.addWidget(self._list, 1)
 
-        self._empty_label = QtWidgets.QLabel('No layers yet — click "+ Add Layer" to start.')
+        self._empty_label = QtWidgets.QLabel('No layers yet.\nUse "Add Layer" to build the stack,\nfrom the substrate upward.')
         self._empty_label.setStyleSheet(f"color: {theme.TEXT_FAINT};")
         self._empty_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._empty_label)
+        root.addWidget(self._empty_label, 1)
+
+        footer = QtWidgets.QLabel("Substrate (bottom)")
+        footer.setStyleSheet(f"color: {theme.TEXT_MUTED};")
+        root.addWidget(footer)
 
         self.refresh()
 
     # ------------------------------------------------------------------
+    def build_add_menu(self, parent=None) -> QtWidgets.QMenu:
+        """The "Add Layer" menu, shared with the toolstrip button."""
+        menu = QtWidgets.QMenu(parent)
+        menu.addAction("Abrupt layer", self._add_abrupt)
+        menu.addAction("Graded layer", self._add_graded)
+        menu.addSeparator()
+        menu.addAction("Quantum region marker", self._add_quantum_marker)
+        menu.addAction("Surface charge", self._add_surface_charge)
+        menu.addAction("Interface dipole", self._add_interface_dipole)
+        return menu
+
+    def delete_selected(self) -> None:
+        if self.selected_index is not None:
+            self._delete(self.selected_index)
+
     def _add_abrupt(self):
         self.model.add_layer(AbruptLayer(x_Al=0.0, thickness_nm=10.0))
         self.select(len(self.model.layers) - 1)
@@ -220,7 +236,14 @@ class LayerStackPanel(QtWidgets.QWidget):
         is_interface = isinstance(layer, _INTERFACE_TYPES)
         title, subtitle = _layer_summary(layer)
 
-        card = _Card(title, subtitle, selected, is_interface)
+        swatch = None
+        if isinstance(layer, AbruptLayer):
+            swatch = theme.material_color(layer.x_Al, getattr(layer, "x_In", 0.0))
+        elif isinstance(layer, GradedLayer):
+            swatch = theme.material_color(
+                0.5 * (layer.x_Al_start + layer.x_Al_end),
+                0.5 * (getattr(layer, "x_In_start", 0.0) + getattr(layer, "x_In_end", 0.0)))
+        card = _Card(title, subtitle, selected, is_interface, swatch)
         card.clicked.connect(lambda i=model_index: self.select(i))
         card.delete_requested.connect(lambda i=model_index: self._delete(i))
 

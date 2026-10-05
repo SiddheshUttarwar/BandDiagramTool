@@ -7,6 +7,8 @@ Given a layer stack grown along the c-axis it computes band edges, electric fiel
 charge, electron and hole densities, confined states, quantum-well transition energies and, under
 bias, the drift-diffusion current.
 
+![BandDiagramTool desktop](docs/assets/gui.png)
+
 **Documentation: <https://siddheshuttarwar.github.io/BandDiagramTool/>**
 Every equation the solver uses, the parameter tables and their sources, the solution algorithms,
 and the validation results.
@@ -55,7 +57,11 @@ pip install -r requirements.txt
 python run_gui.py
 ```
 
-Build a stack from layer cards, set the contacts, and solve one bias point or a voltage sweep.
+The desktop follows the familiar engineering-tool layout: a toolstrip (Home, Plots, View), a
+Device Stack panel, a Properties inspector, tabbed figures, a solver log and a status bar. Build a
+stack with Add Layer, set contacts and options in Properties, and press Run (F5) for one bias
+point or a voltage sweep. Panels can be dragged, floated or hidden; View > Default Layout
+restores them.
 
 **Python**
 

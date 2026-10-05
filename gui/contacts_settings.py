@@ -49,8 +49,10 @@ class ContactsPanel(QtWidgets.QGroupBox):
         barrier_spin.setDecimals(2)
         barrier_spin.setSingleStep(0.05)
         barrier_spin.setSuffix(" eV")
-        barrier_spin.setSpecialValueText("auto (Schottky-Mott)")
-        barrier_spin.setToolTip("Schottky barrier height. 'auto' = metal work function - electron affinity.")
+        barrier_spin.setSpecialValueText("auto")
+        barrier_spin.setMinimumWidth(78)
+        barrier_spin.setToolTip("Schottky barrier height (Ec - Ef at the contact). "
+                                "'auto' = Schottky-Mott estimate: metal work function - electron affinity.")
         barrier_spin.setValue(contact.barrier_eV if getattr(contact, 'barrier_eV', None) else 0.0)
         barrier_spin.setEnabled(contact.contact_type == 'schottky')
 

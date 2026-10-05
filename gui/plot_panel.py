@@ -27,6 +27,7 @@ import os
 from typing import List, Optional, Tuple
 
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 
@@ -40,6 +41,16 @@ from visualization.plotter import (
 from visualization.csv_export import save_result_csv, result_filename
 from gui.layer_stack import _layer_summary
 from gui import theme
+
+# Figures in the GUI use a sans-serif face, like the rest of the desktop
+# (visualization.plotter's own default, for scripts, is a serif journal style).
+matplotlib.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Arial", "Segoe UI", "DejaVu Sans"],
+    "mathtext.fontset": "dejavusans",
+    "axes.linewidth": 0.8,
+    "figure.facecolor": "white",
+})
 
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
 _DEFAULT_PROJECT_NAME = "untitled"
@@ -99,17 +110,17 @@ class PlotPanel(QtWidgets.QWidget):
         self._auto_zoom_applied = False
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(2, 2, 2, 2)
-        root.setSpacing(8)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(6)
 
         zoom_row = QtWidgets.QHBoxLayout()
-        zoom_row.addWidget(QtWidgets.QLabel("Zoom:"))
+        zoom_row.addWidget(QtWidgets.QLabel("Zoom to"))
         self._zoom_combo = QtWidgets.QComboBox()
         self._zoom_combo.addItem(_FULL_DEVICE)
         self._zoom_combo.setMinimumWidth(360)
         self._zoom_combo.currentIndexChanged.connect(lambda _i: self._redraw_current())
         zoom_row.addWidget(self._zoom_combo)
-        hint = QtWidgets.QLabel("(pick a layer to see thin regions like a quantum well clearly)")
+        hint = QtWidgets.QLabel("Pick a layer to magnify thin regions such as a quantum well.")
         hint.setStyleSheet(f"color: {theme.TEXT_FAINT};")
         zoom_row.addWidget(hint)
         zoom_row.addStretch(1)
@@ -140,10 +151,17 @@ class PlotPanel(QtWidgets.QWidget):
             tab_layout.setContentsMargins(0, 0, 0, 0)
             fig = plt.Figure(figsize=(8, 5.5), dpi=100)
             ax = fig.add_subplot(111)
+            # nothing solved yet: a prompt instead of empty 0-1 axes
+            ax.set_axis_off()
+            ax.text(0.5, 0.56, name, ha="center", va="center", transform=ax.transAxes,
+                    color=theme.TEXT_MUTED, fontsize=13)
+            ax.text(0.5, 0.48, "Run a simulation (F5) to show this figure.",
+                    ha="center", va="center", transform=ax.transAxes,
+                    color=theme.TEXT_FAINT, fontsize=10)
             canvas = FigureCanvasQTAgg(fig)
             toolbar = NavigationToolbar2QT(canvas, tab)
             toolbar.setObjectName("mplToolbar")
-            toolbar.setIconSize(QtCore.QSize(20, 20))
+            toolbar.setIconSize(QtCore.QSize(18, 18))
             tab_layout.addWidget(toolbar)
             tab_layout.addWidget(canvas, 1)
             self._notebook.addTab(tab, name)
@@ -151,42 +169,30 @@ class PlotPanel(QtWidgets.QWidget):
 
         # --- Solver log: streams physics.self_consistent's verbose=True
         # per-iteration output live while a solve runs in the background
-        # (see gui.solve_worker's log_fn callback). ---
-        log_controls = QtWidgets.QHBoxLayout()
-        self._log_visible = QtWidgets.QCheckBox("Show solver log")
-        self._log_visible.setChecked(True)
-        self._log_visible.toggled.connect(self._toggle_log)
-        log_controls.addWidget(self._log_visible)
-        clear_btn = QtWidgets.QPushButton("Clear log")
-        clear_btn.clicked.connect(self.clear_log)
-        log_controls.addWidget(clear_btn)
-        log_controls.addStretch(1)
-        root.addLayout(log_controls)
-
-        self._log_group = QtWidgets.QGroupBox("Solver Log")
-        log_layout = QtWidgets.QVBoxLayout(self._log_group)
-        self._log_text = QtWidgets.QPlainTextEdit()
-        self._log_text.setReadOnly(True)
-        self._log_text.setMaximumBlockCount(5000)
-        self._log_text.setFixedHeight(140)
-        self._log_text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        font = QtGui.QFont("Consolas", 9)
-        self._log_text.setFont(font)
-        log_layout.addWidget(self._log_text)
-        root.addWidget(self._log_group)
-
-        status_row = QtWidgets.QHBoxLayout()
-        self._status_label = QtWidgets.QLabel("No solve yet.")
-        status_row.addWidget(self._status_label)
-        status_row.addStretch(1)
-        export_btn = QtWidgets.QPushButton("Export PNG…")
-        export_btn.clicked.connect(self._export_png)
-        status_row.addWidget(export_btn)
-        root.addLayout(status_row)
+        # (see gui.solve_worker's log_fn callback). The widget is created
+        # here but placed by App in its own dock below the figures, and the
+        # status line goes to the main window's status bar. ---
+        self.log_widget = QtWidgets.QPlainTextEdit()
+        self.log_widget.setReadOnly(True)
+        self.log_widget.setMaximumBlockCount(5000)
+        self.log_widget.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_widget.setFont(QtGui.QFont(theme.MONO_FAMILY, 9))
+        self.log_widget.setPlaceholderText("Solver output appears here when a simulation runs.")
+        self._log_text = self.log_widget
+        self._status_callback = None
+        self._status_text = "No solve yet."
 
     # ------------------------------------------------------------------
+    def set_status_callback(self, callback) -> None:
+        """callback(str) receives every status message (the main window's
+        status bar)."""
+        self._status_callback = callback
+        callback(self._status_text)
+
     def set_status(self, text: str):
-        self._status_label.setText(text)
+        self._status_text = text
+        if self._status_callback is not None:
+            self._status_callback(text)
 
     def append_log(self, text: str) -> None:
         self._log_text.appendPlainText(text)
@@ -194,8 +200,18 @@ class PlotPanel(QtWidgets.QWidget):
     def clear_log(self) -> None:
         self._log_text.clear()
 
-    def _toggle_log(self) -> None:
-        self._log_group.setVisible(self._log_visible.isChecked())
+    # ---- used by the toolstrip ----
+    def tab_names(self) -> List[str]:
+        return [name for name, _fn in _PANELS]
+
+    def show_tab(self, name: str) -> None:
+        for i, (panel_name, _fn) in enumerate(_PANELS):
+            if panel_name == name:
+                self._notebook.setCurrentIndex(i)
+                return
+
+    def export_png(self) -> None:
+        self._export_png()
 
     def _write_csv(self, result: SolverResult, project_name: str) -> None:
         """Fire-and-forget CSV export -- a convenience artifact for the user,
@@ -302,6 +318,7 @@ class PlotPanel(QtWidgets.QWidget):
             return
         fig, ax, canvas, fn = self._tabs[name]
         ax.clear()
+        ax.set_axis_on()
         try:
             if name in _SWEEP_AWARE_PANELS:
                 fn(self.results, self.current_index, ax=ax)
@@ -311,6 +328,12 @@ class PlotPanel(QtWidgets.QWidget):
         except Exception as exc:  # noqa: BLE001 - never let a plot crash the app
             ax.text(0.5, 0.5, f"Could not render this panel:\n{exc}",
                      ha="center", va="center", transform=ax.transAxes, wrap=True)
+        try:
+            # the panel functions lay the figure out before the title is
+            # set, so lay it out once more or the title is clipped
+            fig.tight_layout()
+        except Exception:  # noqa: BLE001
+            pass
         canvas.draw_idle()
 
     def _apply_zoom(self, ax, result: SolverResult, tab_name: str):

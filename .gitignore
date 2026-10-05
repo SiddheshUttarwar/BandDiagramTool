@@ -5,11 +5,11 @@ __pycache__/
 *.npz
 /results/
 
-# Excluded from this repo (dev-only)
-/tests/
-/examples/
+# Excluded from this repo (dev-only). examples/ holds scratch scripts and
+# project files; only the numbered, documented examples are published.
+/examples/*
+!/examples/0*.py
 /TestPrograms/
-pytest.ini
 
 # PyInstaller build output and packaging artifacts (regenerate via the
 # .spec file locally; too large/binary to belong in git)

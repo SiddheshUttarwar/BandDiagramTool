@@ -1,9 +1,14 @@
 """
-Layer and contact dataclasses for building AlGaN device structures.
+Layer and contact dataclasses for building III-nitride device structures.
 
-All physical layers are AlxGa(1-x)N with x_Al in [0, 1].
-  x_Al = 0.0  →  GaN
-  x_Al = 1.0  →  AlN
+Every physical layer is one of three materials (physics.materials.nitrides):
+  'AlGaN'    Al(x)Ga(1-x)N          composition x_Al      (x_In must be 0)
+  'InGaN'    In(y)Ga(1-y)N          composition x_In      (x_Al must be 0)
+  'InAlGaN'  Al(x)In(y)Ga(1-x-y)N   composition x_Al, x_In (x + y <= 1;
+             x + y = 1 is AlInN, e.g. lattice-matched Al0.83In0.17N)
+`material` defaults to the simplest class that fits the given fractions,
+so existing AlGaN-only code and saved projects behave exactly as before.
+  x_Al = 0, x_In = 0  ->  GaN;  x_Al = 1 -> AlN;  x_In = 1 -> InN
 
 Supported grading profiles:
   'abrupt'    - constant composition (same as AbruptLayer)
@@ -30,6 +35,21 @@ physical layers precede and follow them.
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from physics.materials.nitrides import (
+    NitrideMaterial, make_material, infer_material_kind,
+)
+
+
+def _resolve_material(layer, pairs):
+    """Infer (if None) and validate layer.material against every
+    (x_Al, x_In) composition the layer spans (both ends if graded)."""
+    if layer.material is None:
+        kinds = {infer_material_kind(a, i) for a, i in pairs}
+        layer.material = ('InAlGaN' if len(kinds) > 1 or 'InAlGaN' in kinds
+                          else kinds.pop())
+    for a, i in pairs:
+        make_material(layer.material, a, i)   # raises ValueError if invalid
+
 
 @dataclass
 class AbruptLayer:
@@ -52,6 +72,22 @@ class AbruptLayer:
         # since resistances of layers stacked in series add). 0.0 (default,
         # "no value given") means this layer contributes none.
     dx_nm: Optional[float] = None  # grid spacing for this layer [nm]; None = use the device default
+    x_In: float = 0.0              # In fraction (InGaN / InAlGaN layers)
+    material: Optional[str] = None  # 'AlGaN' | 'InGaN' | 'InAlGaN'; None = infer
+
+    def __post_init__(self):
+        _resolve_material(self, [(self.x_Al, self.x_In)])
+
+    @property
+    def nitride(self) -> NitrideMaterial:
+        """The layer's material object (physics.materials.nitrides)."""
+        return make_material(self.material, self.x_Al, self.x_In)
+
+    @classmethod
+    def from_material(cls, mat: NitrideMaterial, thickness_nm: float, **kw) -> "AbruptLayer":
+        """AbruptLayer.from_material(InGaN(0.15), 3.0, n_doping=0)."""
+        return cls(x_Al=mat.x_Al, thickness_nm=thickness_nm, x_In=mat.x_In,
+                   material=mat.kind, **kw)
 
 
 @dataclass
@@ -71,6 +107,22 @@ class GradedLayer:
     custom_strain_xx: Optional[float] = None  # see AbruptLayer.custom_strain_xx
     series_resistance: float = 0.0  # see AbruptLayer.series_resistance
     dx_nm: Optional[float] = None  # grid spacing for this layer [nm]; None = use the device default
+    x_In_start: float = 0.0        # In fraction at bottom of layer
+    x_In_end: float = 0.0          # In fraction at top of layer
+    material: Optional[str] = None  # 'AlGaN' | 'InGaN' | 'InAlGaN'; None = infer
+
+    def __post_init__(self):
+        _resolve_material(self, [(self.x_Al_start, self.x_In_start),
+                                 (self.x_Al_end, self.x_In_end)])
+
+    @classmethod
+    def from_materials(cls, start: NitrideMaterial, end: NitrideMaterial,
+                       thickness_nm: float, **kw) -> "GradedLayer":
+        """Graded layer between two materials of the same family, e.g.
+        GradedLayer.from_materials(InGaN(0.0), InGaN(0.1), 20)."""
+        kind = start.kind if start.kind == end.kind else 'InAlGaN'
+        return cls(x_Al_start=start.x_Al, x_Al_end=end.x_Al, thickness_nm=thickness_nm,
+                   x_In_start=start.x_In, x_In_end=end.x_In, material=kind, **kw)
 
 
 @dataclass

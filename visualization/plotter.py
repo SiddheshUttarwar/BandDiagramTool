@@ -67,8 +67,22 @@ _COLORS = {
 
 def _composition_background(ax, x_nm: np.ndarray, x_Al: np.ndarray,
                              y_min: float, y_max: float,
-                             cmap: str = 'Blues', alpha: float = 0.15) -> None:
-    """Shade background with Al composition colour map."""
+                             cmap: str = 'Blues', alpha: float = 0.15,
+                             x_In: Optional[np.ndarray] = None) -> None:
+    """Shade background by composition: Al fraction in blue; where In is
+    present (InGaN / InAlGaN) an orange overlay scaled by x_In."""
+    if x_In is not None and np.any(np.asarray(x_In) > 0):
+        _composition_background(ax, x_nm, x_Al, y_min, y_max, cmap, alpha)
+        cmap_in = plt.get_cmap('Oranges')
+        xi = np.asarray(x_In)
+        for i in range(len(x_nm) - 1):
+            if xi[i] <= 0:
+                continue
+            ax.add_patch(plt.Polygon(
+                [[x_nm[i], y_min], [x_nm[i + 1], y_min], [x_nm[i + 1], y_max], [x_nm[i], y_max]],
+                closed=True, facecolor=cmap_in(0.35 + 0.65 * min(1.0, xi[i] / 0.4)),
+                edgecolor='none', alpha=alpha * 1.6))
+        return
     from matplotlib.collections import PolyCollection
     cmap_obj = plt.get_cmap(cmap)
     dx = x_nm[1] - x_nm[0] if len(x_nm) > 1 else 0.1
@@ -147,8 +161,8 @@ def _mott_background(ax, r: SolverResult) -> None:
     what it does and doesn't model, and physics.self_consistent's docstring
     for what the solver's actual carrier-density physics uses.
     """
-    N_mott_donor = donor_mott_density_cm3(r.x_Al)
-    N_mott_acceptor = acceptor_mott_density_cm3(r.x_Al)
+    N_mott_donor = donor_mott_density_cm3(r.x_Al, getattr(r, 'x_In', None))
+    N_mott_acceptor = acceptor_mott_density_cm3(r.x_Al, getattr(r, 'x_In', None))
     mott_mask = (r.ND > N_mott_donor) | (r.NA > N_mott_acceptor)
     _shaded_spans(ax, r.x_nm, mott_mask, color='#9467bd',
                  label='Mott transition (doping > $N_{Mott}$)', alpha=0.16)
@@ -205,7 +219,7 @@ def plot_band_diagram(
         y_max = max(y_max, float(np.max(E_vac)) + 0.2)
 
     if show_composition_bg:
-        _composition_background(ax, x, r.x_Al, y_min, y_max)
+        _composition_background(ax, x, r.x_Al, y_min, y_max, x_In=getattr(r, 'x_In', None))
 
     if show_mott:
         _mott_background(ax, r)
@@ -329,7 +343,8 @@ def plot_wavefunctions(
     if r.qcse_transition_eV is not None:
         ie, ih = r.qcse_pair if r.qcse_pair is not None else (0, 0)
         if r.qcse_in_well:
-            well_tag = ' (in QW)'
+            well_tag = (' (in QW, local well solve)' if getattr(r, 'qcse_local_solve', False)
+                        else ' (in QW)')
         elif r.qw_window_nm is not None:
             well_tag = ' (global — no state confined in the detected QW)'
         else:

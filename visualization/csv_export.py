@@ -40,7 +40,7 @@ def result_filename(project_name: str, V_applied: float, T: float) -> str:
 # Ec, Efc [electron quasi-Fermi], Efv [hole quasi-Fermi], Ei, Ev), plus the
 # other per-point profiles the remaining panels need.
 _FIELDS = [
-    "x_nm", "x_Al",
+    "x_nm", "x_Al", "x_In",
     "Vacuum_eV", "Ec_eV", "Efc_eV", "Efv_eV", "Ei_eV", "Ev_eV",
     "Ev_lh_eV", "Ev_so_eV", "Ev_hh_eV",
     "phi_V", "E_field_V_per_m",
@@ -63,6 +63,8 @@ def save_result_csv(result: SolverResult, path: str) -> None:
     Ev_lh = result.Ev_lh if getattr(result, 'Ev_lh', None) is not None else result.Ev
     Ev_so = result.Ev_so if getattr(result, 'Ev_so', None) is not None else result.Ev
     Ev_hh = result.Ev_hh if getattr(result, 'Ev_hh', None) is not None else result.Ev
+    x_In = (result.x_In if getattr(result, 'x_In', None) is not None
+            else np.zeros_like(np.asarray(result.x_Al)))
 
     with open(path, "w", newline="", encoding="utf-8") as f:
         f.write(f"# V_applied_V,{result.V_applied}\n")
@@ -73,7 +75,7 @@ def save_result_csv(result: SolverResult, path: str) -> None:
         writer.writerow(_FIELDS)
         for i in range(len(result.x_nm)):
             writer.writerow([
-                repr(float(result.x_nm[i])), repr(float(result.x_Al[i])),
+                repr(float(result.x_nm[i])), repr(float(result.x_Al[i])), repr(float(x_In[i])),
                 repr(float(vacuum[i])), repr(float(result.Ec[i])),
                 repr(float(result.Efn[i])), repr(float(result.Efp[i])),
                 repr(float(result.Ei[i])), repr(float(result.Ev[i])),
@@ -111,6 +113,7 @@ def load_result_csv(path: str) -> dict:
     arr = np.array(rows, dtype=float).T
     return {
         "x_nm": arr[col["x_nm"]], "x_Al": arr[col["x_Al"]],
+        "x_In": arr[col["x_In"]] if "x_In" in col else np.zeros_like(arr[col["x_Al"]]),
         "Ec": arr[col["Ec_eV"]], "Efn": arr[col["Efc_eV"]],
         "Efp": arr[col["Efv_eV"]], "Ei": arr[col["Ei_eV"]],
         "Ev": arr[col["Ev_eV"]],

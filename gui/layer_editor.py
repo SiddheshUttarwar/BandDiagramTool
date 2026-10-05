@@ -155,6 +155,8 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         if new_kind == "Abrupt":
             if isinstance(layer, GradedLayer):
                 new_layer = AbruptLayer(x_Al=layer.x_Al_start, thickness_nm=layer.thickness_nm,
+                                         x_In=getattr(layer, "x_In_start", 0.0),
+                                         material=getattr(layer, "material", None),
                                          n_doping=layer.n_doping, p_doping=layer.p_doping,
                                          relaxed=layer.relaxed, custom_strain_xx=layer.custom_strain_xx,
                                          series_resistance=layer.series_resistance,
@@ -166,6 +168,9 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         elif new_kind == "Graded":
             if isinstance(layer, AbruptLayer):
                 new_layer = GradedLayer(x_Al_start=layer.x_Al, x_Al_end=layer.x_Al,
+                                         x_In_start=getattr(layer, "x_In", 0.0),
+                                         x_In_end=getattr(layer, "x_In", 0.0),
+                                         material=getattr(layer, "material", None),
                                          thickness_nm=layer.thickness_nm,
                                          n_doping=layer.n_doping, p_doping=layer.p_doping,
                                          relaxed=layer.relaxed, custom_strain_xx=layer.custom_strain_xx,
@@ -240,8 +245,20 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         self._vars[label] = (combo, "str")
         return combo
 
+    def _material_choice(self, layer):
+        """Material class dropdown; changing it rebuilds the form so only
+        the fractions that material uses are shown."""
+        self._choice_field("Material", getattr(layer, "material", None) or "AlGaN",
+                           ["AlGaN", "InGaN", "InAlGaN"],
+                           on_change=lambda: self.show(self.index))
+
     def _build_abrupt_form(self, layer: AbruptLayer):
-        self._field("Al fraction (0-1)", layer.x_Al)
+        mat = getattr(layer, "material", None) or "AlGaN"
+        self._material_choice(layer)
+        if mat in ("AlGaN", "InAlGaN"):
+            self._field("Al fraction (0-1)", layer.x_Al)
+        if mat in ("InGaN", "InAlGaN"):
+            self._field("In fraction (0-1)", getattr(layer, "x_In", 0.0))
         self._field("Thickness (nm)", layer.thickness_nm)
         self._field("n-doping (cm^-3)", layer.n_doping)
         self._field("p-doping (cm^-3)", layer.p_doping)
@@ -254,8 +271,14 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
                      "" if layer.dx_nm is None else layer.dx_nm, kind="optional_float")
 
     def _build_graded_form(self, layer: GradedLayer):
-        self._field("Al start (0-1)", layer.x_Al_start)
-        self._field("Al end (0-1)", layer.x_Al_end)
+        mat = getattr(layer, "material", None) or "AlGaN"
+        self._material_choice(layer)
+        if mat in ("AlGaN", "InAlGaN"):
+            self._field("Al start (0-1)", layer.x_Al_start)
+            self._field("Al end (0-1)", layer.x_Al_end)
+        if mat in ("InGaN", "InAlGaN"):
+            self._field("In start (0-1)", getattr(layer, "x_In_start", 0.0))
+            self._field("In end (0-1)", getattr(layer, "x_In_end", 0.0))
         self._field("Thickness (nm)", layer.thickness_nm)
         self._choice_field("Profile", layer.profile, ["linear", "parabolic", "stepped", "abrupt"])
         self._field("n-doping (cm^-3)", layer.n_doping)
@@ -406,10 +429,26 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
                 return None if v.strip() == "" else float(v)
             return v
 
+        def getf(label, default=0.0):
+            return get(label) if label in self._vars else default
+
+        def adapt(mat, x_al, x_in, default_in=0.1):
+            """Composition for `mat`, converting from whatever the form held
+            (In removed for AlGaN, Al removed for InGaN; a fresh InGaN gets
+            10% In so it is not plain GaN)."""
+            if mat == "AlGaN":
+                return x_al, 0.0
+            if mat == "InGaN":
+                return 0.0, (x_in if x_in > 0 else default_in)
+            return x_al, x_in
+
         try:
             if isinstance(layer, AbruptLayer):
+                mat = getf("Material", "AlGaN")
+                x_al, x_in = adapt(mat, getf("Al fraction (0-1)", layer.x_Al),
+                                   getf("In fraction (0-1)", getattr(layer, "x_In", 0.0)))
                 new_layer = AbruptLayer(
-                    x_Al=get("Al fraction (0-1)"),
+                    x_Al=x_al, x_In=x_in, material=mat,
                     thickness_nm=get("Thickness (nm)"),
                     n_doping=get("n-doping (cm^-3)"),
                     p_doping=get("p-doping (cm^-3)"),
@@ -419,9 +458,13 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
                     dx_nm=get("Grid spacing (nm, blank=default)"),
                 )
             elif isinstance(layer, GradedLayer):
+                mat = getf("Material", "AlGaN")
+                a0, i0 = adapt(mat, getf("Al start (0-1)", layer.x_Al_start),
+                               getf("In start (0-1)", getattr(layer, "x_In_start", 0.0)), 0.0)
+                a1, i1 = adapt(mat, getf("Al end (0-1)", layer.x_Al_end),
+                               getf("In end (0-1)", getattr(layer, "x_In_end", 0.0)), 0.1)
                 new_layer = GradedLayer(
-                    x_Al_start=get("Al start (0-1)"),
-                    x_Al_end=get("Al end (0-1)"),
+                    x_Al_start=a0, x_Al_end=a1, x_In_start=i0, x_In_end=i1, material=mat,
                     thickness_nm=get("Thickness (nm)"),
                     n_doping=get("n-doping (cm^-3)"),
                     p_doping=get("p-doping (cm^-3)"),

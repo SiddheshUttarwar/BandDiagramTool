@@ -55,6 +55,8 @@ class AlGaNDevice:
         dx_nm: float = 0.1,
         include_spontaneous_polarization: bool = True,
         include_strain_band_shift: bool = True,
+        polarity: str = 'metal',
+        polarization_model: str = 'ambacher2002',
     ) -> None:
         self.layers   = layers
         self.contacts = contacts
@@ -62,6 +64,8 @@ class AlGaNDevice:
         self.dx_nm    = dx_nm
         self.include_spontaneous_polarization = include_spontaneous_polarization
         self.include_strain_band_shift = include_strain_band_shift
+        self.polarity = polarity                      # 'metal' | 'N'
+        self.polarization_model = polarization_model  # 'ambacher2002' | 'dreyer2016'
         self._grid: Optional[GridData] = None
         self.last_sweep_failed_voltages: List[float] = []
 
@@ -75,6 +79,8 @@ class AlGaNDevice:
             self.layers, self.contacts, T=self.T, dx_nm=self.dx_nm,
             include_spontaneous_polarization=self.include_spontaneous_polarization,
             include_strain_band_shift=self.include_strain_band_shift,
+            polarity=self.polarity,
+            polarization_model=self.polarization_model,
         )
         return self._grid
 

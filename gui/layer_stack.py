@@ -15,6 +15,7 @@ from typing import Callable, List, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from physics.materials.algan import nitride_name
 from devices.layer import (
     AbruptLayer, GradedLayer, QuantumRegionMarker, SurfaceCharge, InterfaceDipole,
 )
@@ -34,7 +35,7 @@ _INTERFACE_TYPES = (QuantumRegionMarker, SurfaceCharge, InterfaceDipole)
 def _layer_summary(layer) -> tuple[str, str]:
     """Return (title, subtitle) describing a layer for its card."""
     if isinstance(layer, AbruptLayer):
-        title = f"Al{layer.x_Al:.2f}Ga{1 - layer.x_Al:.2f}N" if layer.x_Al > 0 else "GaN"
+        title = nitride_name(layer.x_Al, getattr(layer, "x_In", 0.0))
         bits = [f"{layer.thickness_nm:g} nm"]
         if layer.n_doping > 0:
             bits.append(f"n={layer.n_doping:.1e}")
@@ -42,7 +43,8 @@ def _layer_summary(layer) -> tuple[str, str]:
             bits.append(f"p={layer.p_doping:.1e}")
         return title, "  ·  ".join(bits)
     if isinstance(layer, GradedLayer):
-        title = f"Graded Al{layer.x_Al_start:.2f}→{layer.x_Al_end:.2f}GaN"
+        title = (f"Graded {nitride_name(layer.x_Al_start, getattr(layer, 'x_In_start', 0.0))}"
+                 f" → {nitride_name(layer.x_Al_end, getattr(layer, 'x_In_end', 0.0))}")
         bits = [f"{layer.thickness_nm:g} nm", layer.profile]
         if layer.n_doping > 0:
             bits.append(f"n={layer.n_doping:.1e}")

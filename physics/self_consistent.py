@@ -25,14 +25,17 @@ Algorithm:
             [A_pos + D] * phi_new = D*phi + rho/eps0
         where D_i = q*(n_i+p_i)/(eps0*kBT)   [carrier screening in Jacobian]
         The matrix is positive-definite for any n,p ≥ 0.
-     e. Safeguarded, adaptive Anderson AA-I mixing on (phi, phi_new):
-        the residual computed this iteration reflects how well the
-        *previous* step did, so if it grew, alpha is shrunk, the Anderson
-        history is dropped, and this step falls back to plain damping;
-        otherwise alpha grows (capped at alpha_max) and Anderson mixing is
-        used. This lets AA accelerate well-behaved regions while never
-        letting a bad extrapolation compound in the historically fragile
-        high-polarization / high-bias cases.
+     e. Pseudo-transient continuation: the Newton step of (d) is taken
+        with a pseudo-time term 1/dt added to the Jacobian diagonal
+        (physics.poisson.solve_poisson_newton_ptc). The step is accepted
+        only if the true nonlinear Poisson residual does not grow; dt then
+        grows (up to 3x), otherwise dt shrinks (x0.3) and the step is
+        retried. dt -> infinity is the plain Newton step. (Earlier
+        versions mixed a full Newton step with adaptive damping and
+        Anderson acceleration; that scheme entered limit cycles on
+        short-period, strongly polarized stacks. The alpha / anderson_m
+        arguments are still accepted for backward compatibility.)
+        Biased solves use the coupled Newton solver in physics.dd_newton.
      f. Check  max|phi_new - phi| < tol
   4. Return SolverResult
 
@@ -278,6 +281,35 @@ def _solve_confined_states(V_eV_full: np.ndarray, m_full: np.ndarray, dx,
     return E, psi_full
 
 
+def _local_well_transition(g: GridData, Ec: np.ndarray, Ev: np.ndarray, i0: int, i1: int,
+                           dx_cell: np.ndarray, pad_nm: float = 4.0):
+    """(E_e1 - E_h1 [eV], |<psi_e|psi_h>|^2) of the well [i0, i1) from a
+    Schrodinger solve restricted to the well plus pad_nm of barrier on each
+    side (hard walls beyond). The hole is the topmost of the HH/LH/SO
+    ground states. None if no confined pair is found."""
+    x = g.x_nm
+    j0 = int(np.searchsorted(x, x[i0] - pad_nm))
+    j1 = int(min(g.N, np.searchsorted(x, x[i1 - 1] + pad_nm) + 1))
+    if j1 - j0 < 8:
+        return None
+    try:
+        E_e, psi_e = _solve_confined_states(Ec, g.m_e, g.dx, 2, j0, j1, g.N)
+        bands = _solve_hole_bands(Ev, g, g.dx, j0, j1, 2)
+    except Exception:  # noqa: BLE001 - diagnostic only, never break a solve
+        return None
+    if len(E_e) == 0:
+        return None
+    best = None
+    for E_h, psi_h in bands.values():
+        if len(E_h) and (best is None or E_h[0] < best[0]):
+            best = (E_h[0], psi_h[0])
+    if best is None:
+        return None
+    E_h1, psi_h1 = best
+    ov = overlap_squared(psi_e[0], psi_h1, dx_cell)
+    return float(E_e[0] + E_h1), float(ov)     # E_e - (-E_h)
+
+
 def _first_state_in_window(E: Optional[np.ndarray], psi: Optional[np.ndarray],
                             window: tuple[int, int], dx_cell: np.ndarray,
                             min_frac: float = 0.5) -> Optional[int]:
@@ -509,6 +541,8 @@ class SolverResult:
     # strain (deformation-potential) shift of Ec -- the vacuum level is
     # Ec + chi. None for results built without it.
     chi: Optional[np.ndarray] = None
+    # In composition profile (InGaN / InAlGaN); None or zeros for AlGaN.
+    x_In: Optional[np.ndarray] = None
     E_h_lh: Optional[np.ndarray] = None
     psi_h_lh: Optional[np.ndarray] = None
     E_h_so: Optional[np.ndarray] = None
@@ -522,6 +556,10 @@ class SolverResult:
     qcse_overlap: Optional[float] = None
     qcse_pair: Optional[tuple] = None       # (ie, ih) subband indices actually used
     qcse_in_well: bool = False              # True if qcse_pair was well-restricted
+    # True when qcse_transition_eV came from a local single-well
+    # Schrodinger solve (no globally-solved subband was confined in the
+    # detected well); the e1/h1 wavefunctions are then not in psi_e/psi_h.
+    qcse_local_solve: bool = False
 
     # Grid index / nm window of the auto-detected quantum well (devices.
     # grid_builder.build_grid), used to focus the QCSE calc above and to
@@ -998,8 +1036,13 @@ def solve_self_consistent(
     # Composition-dependent dopant ionization energies (Si donor, Mg
     # acceptor vs Al fraction -- physics.materials.algan), used by the
     # initial guess and every solve path below.
-    Ed_x = donor_ionization_energy(g.x_Al)
-    Ea_x = acceptor_ionization_energy(g.x_Al)
+    _gxin = getattr(g, 'x_In', None)
+    if _gxin is not None and np.any(_gxin > 0):
+        Ed_x = donor_ionization_energy(g.x_Al, _gxin)
+        Ea_x = acceptor_ionization_energy(g.x_Al, _gxin)
+    else:
+        Ed_x = donor_ionization_energy(g.x_Al)
+        Ea_x = acceptor_ionization_energy(g.x_Al)
     _log   = log_fn if log_fn is not None else print
     if alpha_max is None:
         alpha_max = alpha
@@ -1704,6 +1747,7 @@ def solve_self_consistent(
     qcse_overlap = None
     qcse_pair = None
     qcse_in_well = False
+    qcse_local_solve = False
     qcse_dominant_transition_eV = None
     qcse_dominant_overlap = None
     qcse_dominant_pair = None
@@ -1743,6 +1787,21 @@ def solve_self_consistent(
                 qcse_transition_eV = float(E_e[ie_sel] - Ev_sub[ih_sel])
                 qcse_pair = (ie_sel, ih_sel)
                 qcse_in_well = True
+
+            # No globally-solved state sits in the designed well (typical at
+            # V=0 in p-i-n LEDs: the quantum region's lowest states are in a
+            # depletion-edge notch, so the well's own subbands rank past
+            # n_states). Solve Schrodinger locally on the well plus up to
+            # 4 nm of barrier each side for the well's own e1/h1 -- the
+            # physically meaningful QCSE transition -- instead of pairing an
+            # n-side electron with a p-side hole.
+            if qcse_transition_eV is None:
+                loc = _local_well_transition(g, Ec_final, Ev_final, qw_i0, qw_i1, dx_cell)
+                if loc is not None:
+                    qcse_transition_eV, qcse_overlap = loc
+                    qcse_pair = (0, 0)
+                    qcse_in_well = True
+                    qcse_local_solve = True
 
         if qcse_transition_eV is None:
             e1h1 = ground_state_transition(E_e, psi_e, E_h, psi_h, dx_cell)
@@ -1808,9 +1867,11 @@ def solve_self_consistent(
         E_e=E_e, psi_e=psi_e, E_h=E_h, psi_h=psi_h,
         Ev_hh=Ev_hh_final, Ev_lh=Ev_lh_final, Ev_so=Ev_so_final,
         chi=np.asarray(g.chi).copy(),
+        x_In=(np.asarray(g.x_In).copy() if getattr(g, 'x_In', None) is not None
+              else np.zeros_like(np.asarray(g.x_Al))),
         E_h_lh=E_h_lh, psi_h_lh=psi_h_lh, E_h_so=E_h_so, psi_h_so=psi_h_so,
         qcse_transition_eV=qcse_transition_eV, qcse_overlap=qcse_overlap,
-        qcse_pair=qcse_pair, qcse_in_well=qcse_in_well,
+        qcse_pair=qcse_pair, qcse_in_well=qcse_in_well, qcse_local_solve=qcse_local_solve,
         qw_window_nm=qw_window_nm,
         qcse_dominant_transition_eV=qcse_dominant_transition_eV,
         qcse_dominant_overlap=qcse_dominant_overlap,

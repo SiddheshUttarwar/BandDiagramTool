@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from physics.materials.algan import get_AlGaN_params
+from physics.materials.algan import get_AlGaN_params, get_nitride_params
 
 _A_H = 0.529e-10       # hydrogen Bohr radius [m]
 _MOTT_TWOSE_C = 4.2    # Mott & Twose (1961) criterion constant: N_Mott*aB^3 = 1/C
@@ -45,29 +45,31 @@ def _mott_density_cm3(m_dos_m0: float, eps_r: float) -> float:
     return N_mott_m3 * 1e-6                 # m^-3 -> cm^-3
 
 
-def donor_mott_density_cm3(x_Al):
+def donor_mott_density_cm3(x_Al, x_In=None):
     """
     N_Mott [cm^-3] for a hydrogenic donor (e.g. Si) at composition x_Al,
     using the conduction-band DOS effective mass. Accepts a scalar or array.
     """
     scalar = np.ndim(x_Al) == 0
     x_arr = np.atleast_1d(np.asarray(x_Al, dtype=float))
+    y_arr = np.zeros_like(x_arr) if x_In is None else np.atleast_1d(np.asarray(x_In, dtype=float))
     out = np.empty_like(x_arr)
     for i, xi in enumerate(x_arr):
-        p = get_AlGaN_params(xi)
+        p = get_AlGaN_params(xi) if y_arr[i] == 0 else get_nitride_params(xi, y_arr[i])
         out[i] = _mott_density_cm3(p.m_e_dos, p.eps_r)
     return float(out[0]) if scalar else out
 
 
-def acceptor_mott_density_cm3(x_Al):
+def acceptor_mott_density_cm3(x_Al, x_In=None):
     """
     N_Mott [cm^-3] for a hydrogenic acceptor (e.g. Mg) at composition x_Al,
     using the valence-band DOS effective mass. Accepts a scalar or array.
     """
     scalar = np.ndim(x_Al) == 0
     x_arr = np.atleast_1d(np.asarray(x_Al, dtype=float))
+    y_arr = np.zeros_like(x_arr) if x_In is None else np.atleast_1d(np.asarray(x_In, dtype=float))
     out = np.empty_like(x_arr)
     for i, xi in enumerate(x_arr):
-        p = get_AlGaN_params(xi)
+        p = get_AlGaN_params(xi) if y_arr[i] == 0 else get_nitride_params(xi, y_arr[i])
         out[i] = _mott_density_cm3(p.m_h_dos, p.eps_r)
     return float(out[0]) if scalar else out

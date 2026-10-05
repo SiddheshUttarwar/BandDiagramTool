@@ -34,7 +34,7 @@ GaN, the crystal-field/SO-character band in Al-rich AlGaN);
 AlGaNParams.valence_offsets_from_top() gives each band's depth below it.
 
 Remaining NSM endpoint values (300 K): Eg GaN 3.39 / AlN 6.026 eV (bowing
-0.7 eV, Vurgaftman), m_e 0.20 / 0.40, m_hh 1.4 / 3.53, m_lh 0.3 / 3.53,
+1.0 eV, see _B_EG_ALGA; Varshni Eg(T) via get_nitride_params_T), m_e 0.20 / 0.40, m_hh 1.4 / 3.53, m_lh 0.3 / 3.53,
 m_so 0.6 / 0.25, Delta_so 0.008 / 0.019 eV, a0 3.189 / 3.112 A,
 c0 5.186 / 4.982 A, GaN C13/C33 106/398 GPa.
 """
@@ -87,6 +87,7 @@ class AlGaNParams:
     D2: float = 0.0
     D3: float = 0.0
     D4: float = 0.0
+    x_In: float = 0.0   # In fraction (Al(x)In(y)Ga(1-x-y)N); 0 = AlGaN
 
     def Nc(self, T: float) -> float:
         """Effective conduction band DOS [cm^-3] at temperature T [K]."""
@@ -245,17 +246,121 @@ class AlGaNParams:
         return d_hh, d_lh, d_so, m_lh_eff, m_so_eff
 
 
-def spontaneous_polarization(x):
-    """Spontaneous polarization Psp(x) at 300 K [C/m^2], Ga-face sign:
-    Ambacher et al., J. Phys.: Condens. Matter 14:3399 (2002),
-        Psp = -0.090 x - 0.034 (1-x) + 0.021 x (1-x).
-    Note the bowing term is POSITIVE (less negative Psp) -- the previous
-    -0.021 (and AlN -0.081) overstated the AlGaN/GaN sheet charge by
-    ~2.8e12 cm^-2 at x = 0.3. nextnano++'s own pyroelectric charge agrees
-    with this formula. Accepts scalars or arrays; the single source of
-    truth for physics.polarization.compute_Psp too."""
+# ---------------------------------------------------------------------------
+# Binary endpoints.  Wurtzite, 300 K.  GaN/AlN values as documented above;
+# InN (added 2026-10-01 for InGaN / AlInN / AlInGaN):
+#   Eg 0.69 eV (room-temperature value, Wu et al. / Davydov et al.; V&M's
+#   Varshni form gives 0.756 at 300 K), valence-band offset InN above GaN
+#   0.58 eV (King et al., PRB 78, 033308 (2008), XPS), eps_c 14.4
+#   (NSM/Ioffe), m_e 0.07 (Wu et al. PRB 66 201403), holes HH/LH/SO
+#   1.63/0.27/0.65 isotropic (NSM/Ioffe), Delta_cr 0.040, Delta_so 0.005,
+#   a 3.545, c 5.703 A, C13/C33 92/224 GPa, e31/e33 -0.57/0.97 C/m^2
+#   (Bernardini 1997 / V&M), Psp -0.042 C/m^2 (Ambacher 2002),
+#   a1 = a2 = -3.5 eV, D1..D4 = -3.7, 4.5, 8.2, -4.1 eV (V&M 2003).
+# ---------------------------------------------------------------------------
+_BIN = {
+    #            GaN        AlN        InN
+    'Eg':      (3.39,      6.026,     0.69),
+    'Ev_off':  (0.0,      -0.80,      0.58),     # top-VB offset vs GaN [eV]
+    'eps_r':   (10.1,      8.57,      14.4),
+    'm_e':     (0.20,      0.40,      0.07),
+    'm_hh':    (1.4,       3.53,      1.63),
+    'm_lh':    (0.3,       3.53,      0.27),
+    'm_so':    (0.6,       0.25,      0.65),
+    'Dcr':     (0.04,     -0.169,     0.040),
+    'Dso':     (0.008,     0.019,     0.005),
+    'a0':      (3.189,     3.112,     3.545),
+    'c0':      (5.186,     4.982,     5.703),
+    'e33':     (0.73,      1.46,      0.97),
+    'e31':     (-0.49,    -0.60,     -0.57),
+    'C13':     (106.0,     108.0,     92.0),
+    'C33':     (398.0,     373.0,     224.0),
+    'hh_pp':   ((1.1, 1.6),   (3.53, 10.42), (1.63, 1.63)),   # (m_par, m_perp)
+    'lh_pp':   ((1.1, 0.15),  (3.53, 0.24),  (0.27, 0.27)),
+    'so_pp':   ((0.15, 1.1),  (0.25, 3.81),  (0.65, 0.65)),
+    'D1':      (-3.7,     -17.1,     -3.7),
+    'D2':      (4.5,       7.9,       4.5),
+    'D3':      (8.2,       8.8,       8.2),
+    'D4':      (-4.1,     -3.9,      -4.1),
+    'a1':      (-4.9,     -3.4,      -3.5),
+    'a2':      (-11.3,    -11.8,     -3.5),
+    'p_pyro':  (6.0e-5,    4.5e-5,    6.0e-5),   # InN: GaN value (no data)
+    # Varshni parameters (Vurgaftman & Meyer 2003): Eg(T) = Eg(0) - alpha T^2 / (T + beta)
+    'varshni_alpha': (0.909e-3, 1.799e-3, 0.245e-3),   # [eV/K]
+    'varshni_beta':  (830.0,    1462.0,   624.0),      # [K]
+}
+
+
+def varshni_shift(x_Al: float, x_In: float, T: float) -> float:
+    """Band-gap change Eg(T) - Eg(300 K) [eV] from the Varshni relation,
+    linearly interpolated between the binaries. Zero at 300 K, so the 300 K
+    gaps in _BIN (and every 300 K result) are untouched. Positive below
+    300 K: +0.072 eV (GaN), +0.092 eV (AlN), +0.024 eV (InN) at T = 0."""
+    x, y, z = _check_comp(x_Al, x_In)
+
+    def dv(i):
+        a, b = _BIN['varshni_alpha'][i], _BIN['varshni_beta'][i]
+        return -a * T * T / (T + b) + a * 300.0 ** 2 / (300.0 + b)
+    return z * dv(0) + x * dv(1) + y * dv(2)
+
+# Band-gap bowing [eV], pairwise form Eg = linear - b_AlGa x z - b_InGa y z
+# - b_AlIn x y (x = Al, y = In, z = Ga): InGaN 1.4 (V&M 2003). AlGaN 1.0:
+# raised from V&M's 0.7 on 2026-10-04 after the 102-paper benchmark --
+# Brunner et al. JAP 82:5090 (1997) measure 1.3, Nepal et al. APL 87:242104
+# (2005) 1.0, and Al0.7GaN emits at 4.78 eV (Agrawal 2023) where b = 0.7
+# gives 5.09 eV and b = 1.0 gives 5.03 eV.
+# AlInN composition dependent, b(u) = 6.43 / (1 + 1.21 u^2) with u the In
+# fraction of the Al-In pair (Sakalauskas et al. 2010) -> ~6.2 eV near the
+# GaN lattice match, giving Eg(In0.17Al0.83N) ~4.2 eV (measured 4.0-4.5).
+_B_EG_ALGA = 1.0
+_B_EG_INGA = 1.4
+
+# Valence-band (offset) bowing for the Al-In pair [eV], Ev_top += b x y.
+# With a linear VBO, lattice-matched Al0.83In0.17N would sit 0.57 eV below
+# GaN, but XPS measures only 0.15-0.2 (+/-0.3) eV with dEc ~0.9-1.0 eV
+# (Akazawa et al., APL 96, 132104 (2010); angle-resolved XPS 0.15 eV).
+# b = 2.6 eV reproduces dEv = 0.2 eV there. Zero for AlGaN and InGaN.
+_B_EV_ALIN = 2.6
+
+
+def _b_eg_alin(x_Al, x_In):
+    u = x_In / (x_Al + x_In) if (x_Al + x_In) > 0 else 0.0
+    return 6.43 / (1.0 + 1.21 * u * u)
+
+
+def _check_comp(x_Al, x_In):
+    x_Al = float(np.clip(x_Al, 0.0, 1.0))
+    x_In = float(np.clip(x_In, 0.0, 1.0))
+    if x_Al + x_In > 1.0 + 1e-9:
+        raise ValueError(f"x_Al + x_In = {x_Al + x_In:.3f} > 1")
+    return x_Al, x_In, max(0.0, 1.0 - x_Al - x_In)
+
+
+def nitride_name(x_Al: float = 0.0, x_In: float = 0.0, digits: int = 2) -> str:
+    """Human-readable alloy name: GaN, AlN, InN, Al0.30Ga0.70N,
+    In0.15Ga0.85N, Al0.83In0.17N, Al0.10In0.05Ga0.85N."""
+    x_Al, x_In, x_Ga = _check_comp(x_Al, x_In)
+    fmt = '{:.%df}' % digits
+    parts = [('Al', x_Al), ('In', x_In), ('Ga', x_Ga)]
+    present = [(el, v) for el, v in parts if v > 10 ** (-digits - 1)]
+    if len(present) == 1:
+        return present[0][0] + 'N'
+    return ''.join(el + fmt.format(v) for el, v in present) + 'N'
+
+
+def spontaneous_polarization(x, x_In=0.0):
+    """Spontaneous polarization Psp at 300 K [C/m^2], Ga-face sign, for
+    Al(x)In(y)Ga(1-x-y)N (Ambacher et al., J. Phys.: Condens. Matter
+    14:3399 (2002)): linear GaN/AlN/InN (-0.034/-0.090/-0.042) plus
+    positive pairwise bowing +0.021 x z (AlGaN), +0.037 y z (InGaN),
+    +0.070 x y (AlInN). For y = 0 this is exactly the AlGaN formula
+    -0.090 x - 0.034 (1-x) + 0.021 x (1-x). nextnano++ uses the same
+    constants. Accepts scalars or arrays."""
     x = np.asarray(x, dtype=float)
-    out = -0.090 * x - 0.034 * (1.0 - x) + 0.021 * x * (1.0 - x)
+    y = np.asarray(x_In, dtype=float)
+    z = 1.0 - x - y
+    out = (-0.090 * x - 0.034 * z - 0.042 * y
+           + 0.021 * x * z + 0.037 * y * z + 0.070 * x * y)
     return float(out) if out.ndim == 0 else out
 
 
@@ -268,130 +373,77 @@ _SI_ED_TABLE_X = np.array([0.0, 0.1, 0.4, 0.6, 1.0])
 _SI_ED_TABLE_E = np.array([0.018, 0.018, 0.050, 0.085, 0.085])
 
 
-def donor_ionization_energy(x):
-    """Si donor ionization energy Ed(x) [eV] below Ec (see table above)."""
+def donor_ionization_energy(x, x_In=0.0):
+    """Si donor ionization energy Ed [eV] below Ec. Al dependence from the
+    table above; Si stays shallow in InGaN, so x_In is accepted for API
+    symmetry but does not change Ed."""
     out = np.interp(np.asarray(x, dtype=float), _SI_ED_TABLE_X, _SI_ED_TABLE_E)
     return float(out) if np.ndim(out) == 0 else out
 
 
-def acceptor_ionization_energy(x):
-    """Mg acceptor ionization energy Ea(x) [eV] above the top valence band:
-    linear from 0.17 eV (GaN) to 0.51 eV (AlN), Nam et al., APL 83:878
-    (2003)."""
-    out = 0.17 + 0.34 * np.asarray(x, dtype=float)
+def acceptor_ionization_energy(x, x_In=0.0):
+    """Mg acceptor ionization energy Ea [eV] above the top valence band.
+    Al: linear 0.17 (GaN) -> 0.51 eV (AlN), Nam et al., APL 83:878 (2003).
+    In: the Mg activation energy falls as the gap shrinks; modelled as the
+    Al value scaled by Eg(x, y) / Eg(x, 0) (heuristic: Ea roughly
+    proportional to Eg). Identical to the AlGaN formula for x_In = 0."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(x_In, dtype=float)
+    if np.all(y == 0):
+        out = 0.17 + 0.34 * x
+    else:
+        xb, yb = np.broadcast_arrays(x, y)
+        ratio = np.array([get_nitride_params(float(a), float(b)).Eg
+                          / get_nitride_params(float(a), 0.0).Eg
+                          for a, b in zip(xb.ravel(), yb.ravel())]).reshape(xb.shape)
+        out = (0.17 + 0.34 * xb) * ratio
     return float(out) if np.ndim(out) == 0 else out
 
 
-def get_AlGaN_params(x: float) -> AlGaNParams:
+def get_nitride_params(x_Al: float, x_In: float = 0.0) -> AlGaNParams:
     """
-    Return material parameters for AlxGa(1-x)N.
-
-    x = 0.0  →  GaN
-    x = 1.0  →  AlN
-    All intermediate values use linear interpolation (Vegard's law) unless
-    a bowing correction is known.
+    Material parameters for wurtzite Al(x)In(y)Ga(1-x-y)N, x = x_Al,
+    y = x_In. Linear (Vegard) interpolation between the GaN/AlN/InN
+    endpoints in _BIN, except the band gap and spontaneous polarization,
+    which use pairwise bowing. For x_In = 0 every value is arithmetically
+    identical to the former AlGaN-only model.
     """
-    x = float(np.clip(x, 0.0, 1.0))
+    x, y, z = _check_comp(x_Al, x_In)
 
-    # --- Bandgap [eV] (NSM: GaN 3.39 eV, AlN 6.026 eV), bowing b = 0.7 eV
-    # (Vurgaftman 2003 -- NSM doesn't tabulate a bowing parameter)
-    Eg_GaN = 3.39
-    Eg_AlN = 6.026
-    Eg = x * Eg_AlN + (1.0 - x) * Eg_GaN - 0.7 * x * (1.0 - x)
+    def L(key):
+        g, a, i = _BIN[key]
+        return x * a + z * g + y * i
 
-    # --- Band alignment: valence-band-offset rule, not electron-affinity
-    # interpolation. GaN/AlN is type-I with the AlN valence band 0.80 eV
-    # BELOW GaN's (Vurgaftman & Meyer, JAP 94:3675 (2003); XPS 0.7-0.8 eV),
-    # linear in x (no VBO bowing). Ev_top(x) = Ev_GaN - 0.80*x, Ec = Ev + Eg,
-    # and chi is derived from Ec with the NSM GaN anchor chi(GaN) = 4.1 eV.
-    # (Interpolating the NSM affinities 4.1 -> 0.6 eV directly made GaN/AlN
-    # type-II with dEc = 3.5 eV -- found by the 2026-10 nextnano++
-    # benchmark, see benchmarks/REPORT.md.)
+    # --- Band gap with pairwise bowing
+    Eg = L('Eg') - _B_EG_ALGA * x * z - _B_EG_INGA * y * z - _b_eg_alin(x, y) * x * y
+
+    # --- Band alignment from the valence-band offset (linear, no VBO
+    # bowing): AlN 0.80 eV below GaN (V&M 2003), InN 0.58 eV above (King
+    # 2008). chi is derived from Ec with the NSM GaN anchor chi(GaN) = 4.1.
     chi_GaN = 4.1
-    dEv_GaN_AlN = 0.80
-    Ev_top = -(chi_GaN + Eg_GaN) - dEv_GaN_AlN * x
+    Ev_top = -(chi_GaN + _BIN['Eg'][0]) + L('Ev_off') + _B_EV_ALIN * x * y
     chi = -(Ev_top + Eg)
 
-    # --- Static relative permittivity PARALLEL to c (the 1D growth axis):
-    # GaN 10.1 (Tsai et al., JAP 85:1475 (1999)), AlN 8.57 (Fonoberov &
-    # Balandin, JAP 94:7178 (2003)) -- the c-axis values nextnano uses. The
-    # NSM 8.9/8.5 are the in-plane/averaged values, too low for Poisson
-    # along [0001].
-    eps_r = x * 8.57 + (1.0 - x) * 10.1
-
-    # --- Electron effective mass [m0]: NSM gives one isotropic value per
-    # endpoint for wurtzite (no separate par/perp component), so both
-    # components below are equal -- kept as two fields for interface
-    # compatibility with the rest of the codebase.
-    m_e_par  = x * 0.40 + (1.0 - x) * 0.20
+    eps_r = L('eps_r')
+    m_e_par = L('m_e')
     m_e_perp = m_e_par
-    m_e_dos  = (m_e_par**2 * m_e_perp)**(1.0 / 3.0)
-
-    # --- Hole effective masses [m0] (NSM): GaN mhh/mlh/mso = 1.4/0.3/0.6
-    # (Leszczynski et al./Fan et al. 1996, isotropic); AlN mhh/mlh/mso =
-    # 3.53/3.53/0.25 (Suzuki & Uenoyama 1996 kz/growth-direction masses --
-    # mhh==mlh there isn't a typo, it's the expected wurtzite k.p
-    # degeneracy of HH/LH along kz at k_t=0). These are the "unswapped"
-    # values valence_band_structure() consumes; that method may pair m_lh
-    # with the physically-SO branch (and vice versa) at high Al -- see
-    # its docstring.
-    m_hh    = x * 3.53 + (1.0 - x) * 1.4
-    m_lh    = x * 3.53 + (1.0 - x) * 0.3
-    m_so    = x * 0.25 + (1.0 - x) * 0.6
+    m_e_dos = (m_e_par**2 * m_e_perp)**(1.0 / 3.0)
+    m_hh, m_lh, m_so = L('m_hh'), L('m_lh'), L('m_so')
     m_h_dos = (m_hh**1.5 + m_lh**1.5)**(2.0 / 3.0)
+    Delta_cr, Delta_so = L('Dcr'), L('Dso')
+    a0, c0 = L('a0'), L('c0')
+    Psp = spontaneous_polarization(x, y)
+    e33, e31 = L('e33'), L('e31')
+    C13, C33 = L('C13') * 1e9, L('C33') * 1e9
 
-    # --- Crystal-field / spin-orbit splitting [eV]: NSM gives GaN
-    # Delta_cr=0.04, Delta_so=0.008 (Bougrov et al. 2001). NSM's AlN table
-    # states crystal-field splitting is "not separately listed", so
-    # Delta_cr(AlN) keeps Vurgaftman & Meyer 2003's -0.169 eV; Delta_so(AlN)
-    # is NSM's own 0.019 eV (Goldberg 2001) -- see
-    # AlGaNParams.valence_band_structure() for how these become the
-    # HH/LH/SO band-edge splitting.
-    Delta_cr = x * (-0.169) + (1.0 - x) * 0.04
-    Delta_so = x * 0.019    + (1.0 - x) * 0.008
+    def _dos(key):
+        g, a, i = (((pp[0] * pp[1] ** 2) ** (1.0 / 3.0)) for pp in _BIN[key])
+        return x * a + z * g + y * i
+    m_hh_dos, m_lh_dos, m_so_dos = _dos('hh_pp'), _dos('lh_pp'), _dos('so_pp')
 
-    # --- Lattice constants [Angstrom], Vegard's law (NSM)
-    a0 = x * 3.112 + (1.0 - x) * 3.189
-    c0 = x * 4.982 + (1.0 - x) * 5.186
-
-    # --- Spontaneous polarization [C/m²]: not in NSM (see module
-    # docstring) -- kept from Bernardini 1997, with bowing.
-    Psp = spontaneous_polarization(x)
-
-    # --- Piezoelectric constants [C/m²]: Bernardini, Fiorentini &
-    # Vanderbilt PRB 56:R10024 (1997) as used by Ambacher et al., J. Phys.:
-    # Condens. Matter 14:3399 (2002) -- the same source as Psp above, so
-    # piezo and spontaneous terms are mutually consistent. (NSM's GaN
-    # e33 = 0.65 underestimates the piezo charge.)
-    e33 = x * 1.46  + (1.0 - x) * 0.73
-    e31 = x * (-0.60) + (1.0 - x) * (-0.49)
-
-    # --- Elastic constants [Pa] (NSM, converted from GPa)
-    # GaN: NSM/Polian 106/398 GPa; AlN: Vurgaftman & Meyer 2003 108/373 GPa
-    C13 = (x * 108.0 + (1.0 - x) * 106.0) * 1e9
-    C33 = (x * 373.0 + (1.0 - x) * 398.0) * 1e9
-
-    # Valence DOS masses from NSM/Ioffe par/perp masses (GaN: HH 1.1/1.6,
-    # LH 1.1/0.15, SO 0.15/1.1; AlN: HH 3.53/10.42, LH 3.53/0.24,
-    # SO 0.25/3.81 m0 -- ioffe.ru/SVA/NSM/Semicond/{GaN,AlN}/bandstr.html),
-    # linear in x. "LH"/"SO" follow the character-based labeling of
-    # valence_band_structure (the AlN crystal-field band is SO-character).
-    def _dos(par_perp_GaN, par_perp_AlN):
-        dg = (par_perp_GaN[0] * par_perp_GaN[1] ** 2) ** (1.0 / 3.0)
-        da = (par_perp_AlN[0] * par_perp_AlN[1] ** 2) ** (1.0 / 3.0)
-        return x * da + (1.0 - x) * dg
-    m_hh_dos = _dos((1.1, 1.6), (3.53, 10.42))
-    m_lh_dos = _dos((1.1, 0.15), (3.53, 0.24))
-    m_so_dos = _dos((0.15, 1.1), (0.25, 3.81))
-
-    # Deformation potentials [eV], Vurgaftman & Meyer 2003 (linear in x):
-    # GaN a1=-4.9 a2=-11.3 D1..D4 = -3.7, 4.5, 8.2, -4.1;
-    # AlN a1=-3.4 a2=-11.8 D1..D4 = -17.1, 7.9, 8.8, -3.9.
-    def _l(g, a):
-        return x * a + (1.0 - x) * g
-    D1, D2, D3, D4 = _l(-3.7, -17.1), _l(4.5, 7.9), _l(8.2, 8.8), _l(-4.1, -3.9)
-    a_cz = _l(-4.9, -3.4) + D1
-    a_ct = _l(-11.3, -11.8) + D2
+    D1, D2, D3, D4 = L('D1'), L('D2'), L('D3'), L('D4')
+    a_cz = L('a1') + D1
+    a_ct = L('a2') + D2
 
     params = AlGaNParams(
         x_Al=x,
@@ -403,6 +455,7 @@ def get_AlGaN_params(x: float) -> AlGaNParams:
         Psp=Psp, e33=e33, e31=e31, C13=C13, C33=C33,
         m_hh_dos=m_hh_dos, m_lh_dos=m_lh_dos, m_so_dos=m_so_dos,
         a_cz=a_cz, a_ct=a_ct, D1=D1, D2=D2, D3=D3, D4=D4,
+        x_In=y,
     )
     # DOS-equivalent single hole mass at 300 K matching Nv() (used e.g. by
     # physics.mott); Nv() itself evaluates the multi-band sum at any T.
@@ -411,16 +464,32 @@ def get_AlGaN_params(x: float) -> AlGaNParams:
     return params
 
 
-def get_AlGaN_params_T(x: float, T: float) -> AlGaNParams:
-    """
-    Return AlGaN parameters with temperature-corrected Psp.
-    Pyroelectric correction from PRB 93:081205 (2016):
-      p_GaN ≈ +6e-5 C/(m²·K),  p_AlN ≈ +4.5e-5 C/(m²·K)
-    Sign convention: Psp becomes less negative as T increases (Ga-face).
-    """
-    params = get_AlGaN_params(x)
-    p_GaN = 6.0e-5   # C/(m²·K)
-    p_AlN = 4.5e-5   # C/(m²·K)
-    p_x   = x * p_AlN + (1.0 - x) * p_GaN
-    params.Psp += (T - 300.0) * p_x
+def get_nitride_params_T(x_Al: float, x_In: float, T: float) -> AlGaNParams:
+    """get_nitride_params at temperature T: Varshni band gap (see
+    varshni_shift; the whole shift is put in the conduction band, i.e. the
+    valence-band offsets are kept temperature independent) and
+    temperature-corrected Psp (pyroelectric, PRB 93:081205 (2016): GaN
+    +6e-5, AlN +4.5e-5 C/(m^2 K); InN assumed equal to GaN). Identical to
+    get_nitride_params at T = 300 K."""
+    params = get_nitride_params(x_Al, x_In)
+    x, y, z = _check_comp(x_Al, x_In)
+    g, a, i = _BIN['p_pyro']
+    params.Psp += (T - 300.0) * (x * a + z * g + y * i)
+    dEg = varshni_shift(x_Al, x_In, T)
+    params.Eg += dEg
+    params.chi -= dEg
     return params
+
+
+def get_AlGaN_params(x: float) -> AlGaNParams:
+    """Al(x)Ga(1-x)N parameters (x_In = 0); see get_nitride_params."""
+    return get_nitride_params(x, 0.0)
+
+
+def get_AlGaN_params_T(x: float, T: float) -> AlGaNParams:
+    """Al(x)Ga(1-x)N parameters with T-corrected Psp; see get_nitride_params_T."""
+    return get_nitride_params_T(x, 0.0, T)
+
+
+# Generic alias: the parameter set now covers the full AlInGaN system.
+NitrideParams = AlGaNParams

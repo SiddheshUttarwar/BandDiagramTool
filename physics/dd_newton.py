@@ -30,6 +30,7 @@ Design:
         eps0 * A_pos phi - rho = 0
         (G_{i+1/2} - G_{i-1/2}) / cw_i - R_i = 0     (dJn/dx =  qR)
         (H_{i+1/2} - H_{i-1/2}) / cw_i + R_i = 0     (dJp/dx = -qR)
+    where R is net recombination minus any optical generation (G_opt).
     with ohmic (Dirichlet) contacts.
   * Convergence is judged on the Newton UPDATE (|dphi|, |dEfn|, |dEfp|
     below tol_update, in volts) -- a scale-free criterion that cannot be
@@ -203,6 +204,9 @@ class DDProblem:
     surf_is_donor: np.ndarray = field(default_factory=lambda: np.array([], dtype=bool))
     gamma_n: Optional[np.ndarray] = None
     gamma_p: Optional[np.ndarray] = None
+    # Optical generation rate [cm^-3 s^-1] per node (physics.illumination);
+    # None = dark. It enters the continuity equations as R - G.
+    G_opt: Optional[np.ndarray] = None
 
     def __post_init__(self):
         self.N = len(self.Ec0)
@@ -283,6 +287,8 @@ class DDProblem:
             + _C_AUG * (excess + (n + p) * p)
         dR_dp = (n / den - excess * _TAU_N / den ** 2) + _B_RAD * n \
             + _C_AUG * (excess + (n + p) * n)
+        if self.G_opt is not None:
+            R = R - self.G_opt          # independent of n, p: the Jacobian is unchanged
         return R, dR_dn, dR_dp
 
     # ------------------------------------------------------------------

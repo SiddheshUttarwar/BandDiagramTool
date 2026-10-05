@@ -1,561 +1,262 @@
 """
-Visual theme for the BandDiagramTool GUI: a neutral engineering-desktop look
-in the manner of MATLAB -- a dark-blue toolstrip tab bar over a light grey
-ribbon, flat grey panel headers, white work surfaces, compact square
-controls and a single blue accent. Applied globally as one Qt stylesheet
-from run_gui.py.
+Shared visual constants for the BandDiagramTool GUI.
 
-Color tokens are also imported directly by layer_stack.py and toolstrip.py,
-which paint parts of their widgets outside the stylesheet.
+The interface itself uses the platform's native widgets (see apply()), in
+the manner of established desktop scientific software: menu bar, toolbar,
+tabbed side panel, one large graphics area and a text output pane. This
+module holds what the native style does not: the material colour scale used
+by the layer table and the figures, the figure palette, number formatting,
+and the application mark.
 """
 
 from __future__ import annotations
 
 import os
+import re
 
-# ---- Color tokens ---------------------------------------------------------
-BG = "#F0F0F0"              # window / dock background
-SURFACE = "#FFFFFF"         # work surfaces (inputs, lists, figure area)
-SURFACE_MUTED = "#F7F7F7"   # secondary fill (log, alternate rows)
-BORDER = "#D4D4D4"
-BORDER_STRONG = "#ABABAB"   # control outlines
+# ---- Colour tokens --------------------------------------------------------
+BG = "#F3F4F7"              # application canvas
+SURFACE = "#FFFFFF"         # panels, cards, inputs
+SURFACE_ALT = "#F8F9FB"     # quiet fill: hover rows, read-only areas
+SURFACE_SUNKEN = "#EEF0F4"  # segmented-control track, pressed
 
-TEXT = "#1F1F1F"
-TEXT_MUTED = "#555555"
-TEXT_FAINT = "#8A8A8A"
+BORDER = "#E4E7EC"          # hairlines
+BORDER_STRONG = "#CFD4DC"   # control outlines
+BORDER_HOVER = "#AEB6C2"
 
-ACCENT = "#0072BD"          # MATLAB blue
-ACCENT_HOVER = "#005F9E"
-ACCENT_PRESSED = "#004C7F"
-ACCENT_SOFT = "#CCE4F7"     # selection / hover fill
-ACCENT_SOFT_BORDER = "#7FB9E6"
+TEXT = "#17202C"
+TEXT_MUTED = "#566273"
+TEXT_FAINT = "#8892A0"
+TEXT_ON_ACCENT = "#FFFFFF"
 
-DANGER = "#C0392B"
-DANGER_SOFT = "#FBEDEB"
-SUCCESS = "#2E8B2E"
+ACCENT = "#2B5FDB"
+ACCENT_HOVER = "#234FBE"
+ACCENT_PRESSED = "#1C419E"
+ACCENT_SOFT = "#EAF0FE"     # selection / hover wash
+ACCENT_SOFT_BORDER = "#B8CBF8"
 
-# Toolstrip
-STRIP_TAB_BG = "#0F4C81"        # tab bar
-STRIP_TAB_BG_HOVER = "#1A5E9A"
-STRIP_TAB_TEXT = "#FFFFFF"
-STRIP_BG = "#F5F5F5"            # ribbon body
-STRIP_SECTION_TEXT = "#6B6B6B"
-STRIP_BTN_HOVER = "#DCEBF7"
-STRIP_BTN_PRESSED = "#C2DCF2"
-STRIP_BTN_HOVER_BORDER = "#9CC7EA"
+SUCCESS = "#16824B"
+SUCCESS_SOFT = "#E5F4EC"
+WARNING = "#A8690A"
+WARNING_SOFT = "#FBF1DD"
+DANGER = "#C4372E"
+DANGER_SOFT = "#FCECEA"
 
-# Dock / panel headers
-HEADER_BG = "#E1E1E1"
-HEADER_TEXT = "#1F1F1F"
-
-BUTTON_BG = "#E9E9E9"
-BUTTON_BG_HOVER = "#DCEBF7"
-BUTTON_BG_PRESSED = "#C2DCF2"
-
-# --- layer_stack.py row tokens ---
-CARD_BG = SURFACE
-CARD_BG_SELECTED = ACCENT_SOFT
-CARD_BG_INTERFACE = "#FBF7E8"           # zero-thickness marker rows
-CARD_BG_INTERFACE_SELECTED = ACCENT_SOFT
-CARD_BORDER = BORDER
-CARD_BORDER_SELECTED = ACCENT
+METAL = "#2A3340"           # contact bars in the cross-section
+METAL_TEXT = "#E7EBF0"
 
 FONT_FAMILY = "Segoe UI"
 FONT_SIZE_PT = 9
-MONO_FAMILY = "Consolas"
+MONO_FAMILY = "Cascadia Mono"
+
+RADIUS = 6
+RADIUS_CARD = 10
+
+# ---- Figure palette -------------------------------------------------------
+# Categorical hues checked with the palette validator for colour-vision
+# separation on a white surface (all pairs, since band-diagram lines cross):
+# blue / red / aqua / violet / yellow pass together (the valence sub-bands
+# also differ by dash pattern), as do blue / orange / aqua.
+FIG_BLUE = "#2A78D6"
+FIG_RED = "#E34948"
+FIG_YELLOW = "#EDA100"
+FIG_VIOLET = "#4A3AA7"
+FIG_ORANGE = "#EB6834"
+FIG_AQUA = "#1BAF7A"
+FIG_NEUTRAL = "#8892A0"
+FIG_GRID = "#ECEEF2"
+FIG_AXIS = "#B7BEC9"
+
+FIGURE_COLORS = {
+    "Ec": FIG_BLUE, "Ev": FIG_RED,
+    "Ev_hh": FIG_AQUA, "Ev_lh": FIG_VIOLET, "Ev_so": FIG_YELLOW,   # each its own hue and dash
+    "Efn": "#17202C", "Efp": "#6B7483",                            # Fermi levels in ink, not a series hue
+    "Ei": FIG_NEUTRAL, "vac": "#B7BEC9",
+    "n": FIG_BLUE, "p": FIG_RED,
+    "Psp": FIG_BLUE, "Ppz": FIG_ORANGE, "Ptot": FIG_AQUA,
+    "Felec": FIG_BLUE, "Fquasi": FIG_ORANGE,
+    "exx": FIG_BLUE, "ezz": FIG_ORANGE,
+}
 
 
-def material_color(x_al: float, x_in: float = 0.0) -> str:
-    """Swatch colour for an Al(x)In(y)Ga(1-x-y)N composition: GaN blue,
-    shifting to violet with Al (wider gap) and to green/amber with In
-    (narrower gap). Used for the colour bar on layer rows."""
-    x_al = max(0.0, min(1.0, float(x_al)))
-    x_in = max(0.0, min(1.0, float(x_in)))
-    gan, aln, inn = (0x00, 0x72, 0xBD), (0x7E, 0x2F, 0x8E), (0xD9, 0x53, 0x19)
-    z = max(0.0, 1.0 - x_al - x_in)
-    rgb = [int(round(z * g + x_al * a + x_in * i)) for g, a, i in zip(gan, aln, inn)]
+# ---- Materials ------------------------------------------------------------
+_GAN = (0x2F, 0x6F, 0xDB)   # blue
+_ALN = (0x7B, 0x45, 0xD6)   # violet  (wider gap -> shorter wavelength)
+_INN = (0x14, 0xA0, 0x7C)   # green   (narrower gap)
+
+
+def _mix(a, b, t: float):
+    return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
+
+
+def _hex(rgb) -> str:
     return "#{:02X}{:02X}{:02X}".format(*rgb)
 
 
+def _rgb(color: str):
+    color = color.lstrip("#")
+    return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def tint(color: str, amount: float) -> str:
+    """`color` mixed toward white; amount 0 = unchanged, 1 = white."""
+    return _hex(_mix(_rgb(color), (255, 255, 255), amount))
+
+
+def shade(color: str, amount: float) -> str:
+    """`color` mixed toward the text colour; amount 0 = unchanged."""
+    return _hex(_mix(_rgb(color), _rgb(TEXT), amount))
+
+
+def material_color(x_al: float, x_in: float = 0.0) -> str:
+    """Colour of an Al(x)In(y)Ga(1-x-y)N composition: GaN blue, toward
+    violet with Al and toward green with In. The same scale colours the
+    device cross-section and the layer bands behind every figure."""
+    x_al = max(0.0, min(1.0, float(x_al)))
+    x_in = max(0.0, min(1.0, float(x_in)))
+    z = max(0.0, 1.0 - x_al - x_in)
+    return _hex(tuple(int(round(z * g + x_al * a + x_in * i)) for g, a, i in zip(_GAN, _ALN, _INN)))
+
+
+# ---- Text helpers ---------------------------------------------------------
+_SUP = str.maketrans("0123456789-+", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺")
+
+
+def formula_html(name: str) -> str:
+    """'Al0.30Ga0.70N' -> 'Al<sub>0.30</sub>Ga<sub>0.70</sub>N' (Qt rich text)."""
+    return re.sub(r"(?<=[A-Za-z])(\d+(?:\.\d+)?)", r"<sub>\1</sub>", name)
+
+
+def sci(value: float, digits: int = 2) -> str:
+    """1.08e13 -> '1.08×10¹³'; values between 0.01 and 10^4 stay plain."""
+    if value == 0 or value != value:
+        return "0"
+    a = abs(value)
+    if 1e-2 <= a < 1e4:
+        return f"{value:.{digits + 1}g}"
+    exp = int(f"{a:e}".split("e")[1])
+    mant = value / 10 ** exp
+    mant_s = f"{mant:.{digits}f}".rstrip("0").rstrip(".")
+    if mant_s in ("10", "-10"):
+        mant_s, exp = mant_s[:-1], exp + 1
+    power = "10" + str(exp).translate(_SUP)
+    if mant_s == "1":
+        return power
+    return f"{mant_s}×{power}"
+
+
+# ---- Drawn assets ---------------------------------------------------------
 def _asset_dir() -> str:
     import tempfile
-    d = os.path.join(tempfile.gettempdir(), "banddiagramtool_ui")
+    d = os.path.join(tempfile.gettempdir(), "banddiagramtool_ui_v3")
     os.makedirs(d, exist_ok=True)
     return d
 
 
 def _glyph(name: str) -> str:
     """Path (forward slashes, for QSS url()) of a small glyph image drawn on
-    first use: Qt style sheets can only take indicator and arrow artwork from
-    image files. Requires a running QApplication."""
+    first use: Qt style sheets can only take indicator and arrow artwork
+    from image files. Requires a running QApplication."""
     from PyQt6 import QtCore, QtGui
     path = os.path.join(_asset_dir(), f"{name}.png")
     if not os.path.exists(path):
-        scale = 3
+        scale = 4
         pm = QtGui.QPixmap(12 * scale, 12 * scale)
         pm.fill(QtCore.Qt.GlobalColor.transparent)
         p = QtGui.QPainter(pm)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         p.scale(scale, scale)
+        color = {"check": "#FFFFFF", "chev_down_disabled": BORDER_HOVER}.get(name, TEXT_MUTED)
+        pen = QtGui.QPen(QtGui.QColor(color))
+        pen.setWidthF(1.8 if name == "check" else 1.4)
+        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
         if name == "check":
-            pen = QtGui.QPen(QtGui.QColor("#FFFFFF"))
-            pen.setWidthF(1.9)
-            pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-            pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
-            p.setPen(pen)
-            p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(2.6, 6.3), QtCore.QPointF(5.0, 8.7),
-                                            QtCore.QPointF(9.6, 3.4)]))
-        else:   # "arrow_down" / "arrow_down_disabled" / "arrow_up"
-            p.setPen(QtCore.Qt.PenStyle.NoPen)
-            p.setBrush(QtGui.QColor(TEXT_FAINT if name.endswith("disabled") else TEXT_MUTED))
-            if name == "arrow_up":
-                pts = [(2.5, 8.0), (9.5, 8.0), (6.0, 4.0)]
-            else:
-                pts = [(2.5, 4.5), (9.5, 4.5), (6.0, 8.5)]
-            p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in pts]))
+            pts = [(2.6, 6.3), (5.0, 8.6), (9.5, 3.6)]
+        elif name == "chev_up":
+            pts = [(3.0, 7.6), (6.0, 4.6), (9.0, 7.6)]
+        else:
+            pts = [(3.0, 4.6), (6.0, 7.6), (9.0, 4.6)]
+        p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in pts]))
         p.end()
         pm.save(path)
     return path.replace(os.sep, "/")
 
 
+def logo_pixmap(size: int = 64):
+    """The application mark: a polarization-tilted quantum well (conduction
+    and valence band edges) on a GaN-blue to AlN-violet field."""
+    from PyQt6 import QtCore, QtGui
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(QtCore.Qt.GlobalColor.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    p.scale(size / 32.0, size / 32.0)
+    grad = QtGui.QLinearGradient(0, 0, 32, 32)
+    grad.setColorAt(0.0, QtGui.QColor("#2F7BEA"))
+    grad.setColorAt(1.0, QtGui.QColor("#6B3FD9"))
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    p.setBrush(grad)
+    p.drawRoundedRect(QtCore.QRectF(1, 1, 30, 30), 7.5, 7.5)
+    pen = QtGui.QPen(QtGui.QColor("#FFFFFF"))
+    pen.setWidthF(2.1)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    # a quantum well: band edge, bound level, and its probability density
+    well = [(5.5, 11.0), (11.0, 11.0), (11.0, 23.0), (21.0, 23.0), (21.0, 11.0), (26.5, 11.0)]
+    p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in well]))
+    psi = QtGui.QPainterPath(QtCore.QPointF(11.0, 19.0))
+    psi.cubicTo(QtCore.QPointF(13.6, 19.0), QtCore.QPointF(14.2, 13.2), QtCore.QPointF(16.0, 13.2))
+    psi.cubicTo(QtCore.QPointF(17.8, 13.2), QtCore.QPointF(18.4, 19.0), QtCore.QPointF(21.0, 19.0))
+    fill = QtGui.QPainterPath(psi)
+    fill.closeSubpath()
+    p.fillPath(fill, QtGui.QColor(255, 255, 255, 90))
+    pen.setWidthF(1.6)
+    p.setPen(pen)
+    p.drawPath(psi)
+    p.end()
+    return pm
+
+
+def app_icon():
+    from PyQt6 import QtGui
+    ico = QtGui.QIcon()
+    for s in (16, 24, 32, 48, 64, 128, 256):
+        ico.addPixmap(logo_pixmap(s))
+    return ico
+
+
+def polish_menu(menu):
+    """Menus use the platform's own frame; kept as a hook for callers."""
+    return menu
+
+
+def apply(app) -> None:
+    """Native platform widgets (the look of established desktop scientific
+    software), the system UI font, and the window icon. Only a handful of
+    labels are styled; everything else is drawn by the operating system."""
+    from PyQt6 import QtGui, QtWidgets
+    for name in ("windowsvista", "Fusion"):
+        if name in QtWidgets.QStyleFactory.keys():
+            app.setStyle(name)
+            break
+    app.setFont(QtGui.QFont(FONT_FAMILY, FONT_SIZE_PT))
+    app.setStyleSheet(stylesheet())
+    app.setWindowIcon(app_icon())
+
+
 def stylesheet() -> str:
-    check, arrow, arrow_off = _glyph("check"), _glyph("arrow_down"), _glyph("arrow_down_disabled")
-    arrow_up = _glyph("arrow_up")
     return f"""
-    * {{
-        font-family: "{FONT_FAMILY}";
-        color: {TEXT};
-    }}
-    QMainWindow, QWidget {{
-        background: {BG};
-    }}
-    QMainWindow::separator {{
-        background: {BORDER};
-        width: 4px;
-        height: 4px;
-    }}
-    QMainWindow::separator:hover {{
-        background: {ACCENT_SOFT_BORDER};
-    }}
-    QSplitter::handle {{
-        background: {BORDER};
-    }}
-
-    /* ---- docks ---- */
-    QDockWidget {{
-        font-weight: 600;
-        titlebar-close-icon: none;
-        titlebar-normal-icon: none;
-    }}
-    QDockWidget::title {{
-        background: {HEADER_BG};
-        border: 1px solid {BORDER};
-        border-bottom: 1px solid {BORDER_STRONG};
-        padding: 5px 8px;
-        text-align: left;
-    }}
-    QDockWidget > QWidget {{
-        border: 1px solid {BORDER};
-        border-top: none;
-    }}
-
-    /* ---- sections inside the property inspector ---- */
-    QGroupBox {{
-        background: {SURFACE};
-        border: 1px solid {BORDER};
-        border-radius: 0px;
-        margin-top: 22px;
-        padding: 8px 8px 8px 8px;
-        font-weight: 600;
-    }}
-    QGroupBox::title {{
-        subcontrol-origin: margin;
-        subcontrol-position: top left;
-        left: 0px;
-        top: 0px;
-        padding: 3px 8px;
-        background: {HEADER_BG};
-        border: 1px solid {BORDER};
-        color: {HEADER_TEXT};
-    }}
-    QLabel {{
-        background: transparent;
-    }}
-
-    /* ---- inputs ---- */
-    QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
-        background: {SURFACE};
-        border: 1px solid {BORDER_STRONG};
-        border-radius: 2px;
-        padding: 2px 6px;
-        min-height: 18px;
-        selection-background-color: {ACCENT};
-        selection-color: white;
-    }}
-    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
-        border: 1px solid {ACCENT};
-    }}
-    QLineEdit:disabled, QComboBox:disabled {{
-        background: {BG};
-        color: {TEXT_FAINT};
-    }}
-    QComboBox {{
-        padding-right: 18px;
-    }}
-    QComboBox::drop-down {{
-        subcontrol-origin: padding;
-        subcontrol-position: center right;
-        border: none;
-        border-left: 1px solid {BORDER};
-        width: 16px;
-    }}
-    QComboBox::down-arrow {{
-        image: url({arrow});
-        width: 10px;
-        height: 10px;
-    }}
-    QComboBox::down-arrow:disabled {{
-        image: url({arrow_off});
-    }}
-    QAbstractSpinBox {{
-        padding-right: 16px;
-    }}
-    QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
-        subcontrol-origin: border;
-        width: 15px;
-        border: none;
-        border-left: 1px solid {BORDER};
-        background: {BG};
-    }}
-    QAbstractSpinBox::up-button {{
-        subcontrol-position: top right;
-        border-bottom: 1px solid {BORDER};
-    }}
-    QAbstractSpinBox::down-button {{
-        subcontrol-position: bottom right;
-    }}
-    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
-        background: {STRIP_BTN_HOVER};
-    }}
-    QAbstractSpinBox::up-arrow {{
-        image: url({arrow_up});
-        width: 8px;
-        height: 8px;
-    }}
-    QAbstractSpinBox::down-arrow {{
-        image: url({arrow});
-        width: 8px;
-        height: 8px;
-    }}
-    QComboBox QAbstractItemView {{
-        background: {SURFACE};
-        border: 1px solid {BORDER_STRONG};
-        selection-background-color: {ACCENT_SOFT};
-        selection-color: {TEXT};
-        outline: 0;
-    }}
-
-    /* ---- buttons ---- */
-    QPushButton {{
-        background: {BUTTON_BG};
-        border: 1px solid {BORDER_STRONG};
-        border-radius: 2px;
-        padding: 4px 14px;
-        min-height: 16px;
-    }}
-    QPushButton:hover {{
-        background: {BUTTON_BG_HOVER};
-        border-color: {ACCENT_SOFT_BORDER};
-    }}
-    QPushButton:pressed {{
-        background: {BUTTON_BG_PRESSED};
-    }}
-    QPushButton:disabled {{
-        color: {TEXT_FAINT};
-        background: {BG};
-        border-color: {BORDER};
-    }}
-    QPushButton#primary {{
-        background: {ACCENT};
-        border: 1px solid {ACCENT_HOVER};
-        color: white;
-        font-weight: 600;
-    }}
-    QPushButton#primary:hover {{
-        background: {ACCENT_HOVER};
-    }}
-    QPushButton#primary:pressed {{
-        background: {ACCENT_PRESSED};
-    }}
-    QPushButton#danger {{
-        background: {SURFACE};
-        color: {DANGER};
-        border: 1px solid {DANGER};
-    }}
-    QPushButton#danger:hover {{
-        background: {DANGER_SOFT};
-    }}
-    QCheckBox, QRadioButton {{
-        spacing: 6px;
-        background: transparent;
-    }}
-    QCheckBox::indicator {{
-        width: 13px;
-        height: 13px;
-        border: 1px solid {BORDER_STRONG};
-        border-radius: 2px;
-        background: {SURFACE};
-    }}
-    QCheckBox::indicator:hover {{
-        border-color: {ACCENT};
-    }}
-    QCheckBox::indicator:checked {{
-        background: {ACCENT};
-        border-color: {ACCENT};
-        image: url({check});
-    }}
-    QCheckBox::indicator:disabled {{
-        background: {BG};
-        border-color: {BORDER};
-    }}
-    QToolButton {{
-        border: 1px solid transparent;
-        background: transparent;
-        padding: 3px 6px;
-        border-radius: 2px;
-    }}
-    QToolButton:hover {{
-        background: {STRIP_BTN_HOVER};
-        border: 1px solid {STRIP_BTN_HOVER_BORDER};
-    }}
-    QToolButton:pressed, QToolButton:checked {{
-        background: {STRIP_BTN_PRESSED};
-        border: 1px solid {ACCENT_SOFT_BORDER};
-    }}
-    QToolButton:disabled {{
-        color: {TEXT_FAINT};
-    }}
-    QToolButton::menu-indicator {{
-        image: url({arrow});
-        width: 9px;
-        height: 9px;
-        subcontrol-position: right center;
-        right: 3px;
-    }}
-    QToolButton#stripLarge::menu-indicator {{
-        subcontrol-position: bottom center;
-        bottom: 1px;
-        right: 0px;
-    }}
-
-    /* ---- toolstrip ---- */
-    QWidget#stripTabBar {{
-        background: {STRIP_TAB_BG};
-    }}
-    QWidget#stripTabBar QLabel {{
-        color: #D6E4F2;
-    }}
-    QToolButton#stripTab {{
-        color: {STRIP_TAB_TEXT};
-        background: transparent;
-        border: none;
-        border-radius: 0px;
-        padding: 6px 16px 5px 16px;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }}
-    QToolButton#stripTab:hover {{
-        background: {STRIP_TAB_BG_HOVER};
-        border: none;
-    }}
-    QToolButton#stripTab:checked {{
-        background: {STRIP_BG};
-        color: {TEXT};
-        border: none;
-    }}
-    QWidget#stripBody {{
-        background: {STRIP_BG};
-        border-bottom: 1px solid {BORDER_STRONG};
-    }}
-    QWidget#stripBody QWidget {{
-        background: {STRIP_BG};
-    }}
-    QLabel#stripSectionLabel {{
-        color: {STRIP_SECTION_TEXT};
-        font-size: 7.5pt;
-        letter-spacing: 0.6px;
-        padding: 0px 0px 2px 0px;
-    }}
-    QFrame#stripSeparator {{
-        background: {BORDER};
-        max-width: 1px;
-        min-width: 1px;
-    }}
-    QToolButton#stripLarge {{
-        padding: 3px 6px 2px 6px;
-        min-width: 54px;
-    }}
-    QToolButton#stripSmall {{
-        padding: 1px 6px;
-        text-align: left;
-    }}
-
-    /* ---- matplotlib navigation toolbar ---- */
-    QWidget#mplToolbar {{
-        background: {STRIP_BG};
-        border: none;
-        border-bottom: 1px solid {BORDER};
-        padding: 1px;
-    }}
-    QWidget#mplToolbar QLabel {{
-        color: {TEXT_MUTED};
-    }}
-
-    QMenuBar {{
-        background: {BG};
-        border-bottom: 1px solid {BORDER};
-    }}
-    QMenuBar::item {{
-        padding: 3px 9px;
-    }}
-    QMenuBar::item:selected {{
-        background: {ACCENT_SOFT};
-    }}
-    QMenu {{
-        background: {SURFACE};
-        border: 1px solid {BORDER_STRONG};
-        padding: 2px;
-    }}
-    QMenu::item {{
-        padding: 4px 24px 4px 20px;
-    }}
-    QMenu::item:selected {{
-        background: {ACCENT_SOFT};
-    }}
-    QMenu::separator {{
-        height: 1px;
-        background: {BORDER};
-        margin: 3px 6px;
-    }}
-
-    /* ---- document tabs (figures) ---- */
-    QTabWidget::pane {{
-        border: 1px solid {BORDER_STRONG};
-        background: {SURFACE};
-        top: -1px;
-    }}
-    QTabBar::tab {{
-        background: {HEADER_BG};
-        border: 1px solid {BORDER_STRONG};
-        border-bottom: none;
-        padding: 4px 14px;
-        margin-right: -1px;
-        color: {TEXT_MUTED};
-    }}
-    QTabBar::tab:selected {{
-        background: {SURFACE};
-        color: {TEXT};
-        font-weight: 600;
-        border-top: 2px solid {ACCENT};
-    }}
-    QTabBar::tab:hover:!selected {{
-        background: {STRIP_BTN_HOVER};
-        color: {TEXT};
-    }}
-
-    QListWidget {{
-        background: {SURFACE};
-        border: 1px solid {BORDER};
-        outline: 0;
-    }}
-    QScrollArea {{
-        border: none;
-        background: transparent;
-    }}
-    QScrollBar:vertical {{
-        background: {BG};
-        width: 12px;
-        margin: 0px;
-    }}
-    QScrollBar::handle:vertical {{
-        background: #C2C2C2;
-        min-height: 24px;
-        margin: 2px;
-        border-radius: 2px;
-    }}
-    QScrollBar::handle:vertical:hover {{
-        background: #A0A0A0;
-    }}
-    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-        height: 0px;
-    }}
-    QScrollBar:horizontal {{
-        background: {BG};
-        height: 12px;
-        margin: 0px;
-    }}
-    QScrollBar::handle:horizontal {{
-        background: #C2C2C2;
-        min-width: 24px;
-        margin: 2px;
-        border-radius: 2px;
-    }}
-    QScrollBar::handle:horizontal:hover {{
-        background: #A0A0A0;
-    }}
-    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-        width: 0px;
-    }}
-    QSlider::groove:horizontal {{
-        background: {BORDER_STRONG};
-        height: 3px;
-    }}
-    QSlider::handle:horizontal {{
-        background: {ACCENT};
-        width: 10px;
-        height: 16px;
-        margin: -7px 0;
-        border-radius: 2px;
-    }}
-    QSlider::handle:horizontal:hover {{
-        background: {ACCENT_HOVER};
-    }}
-    QPlainTextEdit {{
-        font-family: "{MONO_FAMILY}", "Courier New", monospace;
-        background: {SURFACE};
-        border: none;
-        selection-background-color: {ACCENT};
-        selection-color: white;
-    }}
-    QStatusBar {{
-        background: {BG};
-        border-top: 1px solid {BORDER_STRONG};
-    }}
-    QStatusBar::item {{
-        border: none;
-    }}
-    QStatusBar QLabel {{
-        padding: 0px 6px;
-        color: {TEXT_MUTED};
-    }}
-    QProgressBar {{
-        border: 1px solid {BORDER_STRONG};
-        background: {SURFACE};
-        max-height: 10px;
-        min-width: 110px;
-        max-width: 110px;
-        text-align: center;
-    }}
-    QProgressBar::chunk {{
-        background: {ACCENT};
-    }}
-    QMessageBox, QDialog {{
-        background: {BG};
-    }}
-    QToolTip {{
-        background: #FFFFE1;
-        color: {TEXT};
-        border: 1px solid {BORDER_STRONG};
-        padding: 3px 6px;
-    }}
+    QLabel#unit, QLabel#sectionMeta {{ color: {TEXT_FAINT}; }}
+    QLabel#note {{ color: {TEXT_MUTED}; }}
+    QLabel#empty {{ color: {TEXT_FAINT}; }}
+    QLabel#subhead {{ color: {TEXT_MUTED}; font-weight: 600; padding-top: 4px; }}
+    QPlainTextEdit#log {{
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 9pt;
+    }}
+    QToolBar {{ spacing: 1px; }}
     """

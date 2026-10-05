@@ -9,7 +9,7 @@ Panels available:
                            diagnostic shading (toggle: show_mott)
   plot_wavefunctions()  — |psi_n|^2 overlaid on band diagram
   plot_carriers()       — n(x) and p(x) on log scale
-  plot_fields()         — electrostatic + quasi-electric + total field
+  plot_fields()         — electric field (quasi-electric field shown for reference)
   plot_polarization()   — Psp, Ppz, P_total + interface sheet charge bars
   plot_strain()         — eps_xx and eps_zz vs position
   plot_qcse()           — QCSE Stark shift + e-h overlap vs bias
@@ -293,6 +293,7 @@ def plot_wavefunctions(
     n_show_e: int = 3,
     n_show_h: int = 3,
     scale: float = 0.4,
+    show_composition_bg: bool = True,
 ) -> plt.Axes:
     """
     Panel 2: |ψ_n|² overlaid on band diagram, offset to their subband energy.
@@ -305,7 +306,8 @@ def plot_wavefunctions(
     # wavefunction overlay would just be visual clutter with no state to
     # anchor it to.
     ax = plot_band_diagram(r, ax=ax, show_vacuum=False, show_valence_bands=False,
-                           annotate=False, title='Wavefunctions')
+                           annotate=False, title='Wavefunctions',
+                           show_composition_bg=show_composition_bg)
 
     if r.psi_e is None or r.E_e is None:
         ax.set_title('Wavefunctions (run with quantum=True)')
@@ -389,7 +391,8 @@ def plot_fields(
     ax: Optional[plt.Axes] = None,
     units: str = 'MV/cm',
 ) -> plt.Axes:
-    """Panel 4: Electrostatic field, quasi-electric field, and total field."""
+    """Panel 4: the electric field. The quasi-electric field of a composition
+    gradient is drawn alongside for reference only; it is not added to the field."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 4))
 
@@ -403,20 +406,25 @@ def plot_fields(
 
     F_elec  = r.E_field * scale
     F_quasi = r.F_quasi * scale
-    F_total = (r.E_field + r.F_quasi) * scale
 
-    ax.plot(x, F_elec,  color=_COLORS['Felec'],  lw=1.8, label='$F_{elec}$')
-    ax.plot(x, F_quasi, color=_COLORS['Fquasi'], lw=1.5, ls='--', label='$F_{quasi}$')
-    ax.plot(x, F_total, color=_COLORS['Ftot'],   lw=1.8, ls='-.',
-            label='$F_{total}$', alpha=0.8)
+    ax.plot(x, F_elec,  color=_COLORS['Felec'],  lw=1.8, label='$F$')
+    ax.plot(x, F_quasi, color=_COLORS['Fquasi'], lw=1.5, ls='--', label='$F_{quasi}$ (reference only)')
 
     ax.axhline(0, color='black', lw=0.5, ls=':')
 
     ax.set_xlabel('Position (nm)', fontsize=11)
     ax.set_ylabel(ylabel, fontsize=11)
     ax.set_xlim(x[0], x[-1])
+    # Scale the axis to the electric field. The reference curve is included
+    # only where it is smooth (a graded layer): at an abrupt interface it is
+    # a one-node spike that would otherwise flatten the field itself.
+    lo, hi = float(np.min(F_elec)), float(np.max(F_elec))
+    q_lo, q_hi = np.percentile(F_quasi, [2, 98])
+    lo, hi = min(lo, float(q_lo)), max(hi, float(q_hi))
+    pad = 0.08 * (hi - lo) if hi > lo else 0.5
+    ax.set_ylim(lo - pad, hi + pad)
     _legend_right(ax, fontsize=9)
-    ax.set_title('Electric Fields', fontsize=10)
+    ax.set_title('Electric Field', fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
     return ax
 
@@ -556,8 +564,6 @@ def plot_qcse(
                     f'{r.qcse_dominant_transition_eV:.4f} eV, '
                     f'{r.qcse_dominant_overlap * 100:.2f}% overlap.',
                     ha='center', fontsize=8.5, color='#a55a00', transform=ax.transAxes)
-            ax.text(0.5, 0.12, 'Run a voltage sweep to see the Stark shift vs bias.',
-                    ha='center', fontsize=9, color='#888888', transform=ax.transAxes)
         ax.set_title('Quantum-Confined Stark Effect', fontsize=10)
         return ax
 
@@ -647,3 +653,167 @@ def plot_all(
         print(f"Saved to {save_path}")
 
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Reciprocal space map (physics.rsm)
+# ---------------------------------------------------------------------------
+
+def plot_rsm(rsm, ax: Optional[plt.Axes] = None, decades: float = 6.0) -> plt.Axes:
+    """
+    Reciprocal space map from physics.rsm.simulate_rsm: log intensity over
+    (Q_x, Q_z), the pseudomorphic line through the bottom layer's rod, and
+    the fully relaxed position of every alloy in the stack, numbered and
+    listed in a key. A symmetric reflection has all layers on Q_x = 0, so it
+    is drawn as the line scan along Q_z instead.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 6))
+    fig = ax.get_figure()
+    key = '\n'.join(f'{i + 1}   {name}' for i, (name, _qx, _qz) in enumerate(rsm.relaxed_points))
+    box = dict(boxstyle='round,pad=0.5', fc='white', ec='#cfd4dc', lw=0.6, alpha=0.92)
+
+    if rsm.symmetric:
+        scan = rsm.intensity[:, rsm.intensity.shape[1] // 2]
+        ax.semilogy(rsm.qz, np.maximum(scan, 10.0 ** (-decades)), color=_COLORS['Ec'], lw=1.2)
+        for i, (_name, _qx, qz) in enumerate(rsm.relaxed_points):
+            ax.axvline(qz, color='#8892a0', lw=0.6, ls=':')
+            ax.text(qz, 3.0 * (3.2 if i % 2 else 1.0), str(i + 1), ha='center', va='bottom',
+                    fontsize=7.5, color='#17202c')
+        ax.text(0.015, 0.97, 'Relaxed alloys\n' + key, transform=ax.transAxes, ha='left', va='top',
+                fontsize=7.5, color='#17202c', bbox=box, linespacing=1.4)
+        ax.set_xlim(rsm.qz[0], rsm.qz[-1])
+        ax.set_ylim(10.0 ** (-decades), 60.0)
+        ax.set_xlabel('$Q_z$ (Å$^{-1}$)', fontsize=11)
+        ax.set_ylabel('Intensity (normalised)', fontsize=11)
+        ax.set_title(f'Scan along $Q_z$, {rsm.label} reflection', fontsize=10)
+        ax.grid(True, which='major', alpha=0.3, lw=0.5)
+        return ax
+
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list(
+        'rsm', ['#ffffff', '#cde2fb', '#6da7ec', '#2a78d6', '#104281', '#0d366b'])
+    logi = np.log10(np.maximum(rsm.intensity, 10.0 ** (-decades)))
+    mesh = ax.pcolormesh(rsm.qx, rsm.qz, logi, cmap=cmap, vmin=-decades, vmax=0.0,
+                         shading='auto', rasterized=True)
+    cbar = fig.colorbar(mesh, ax=ax, pad=0.02, fraction=0.05)
+    cbar.set_label('log$_{10}$ intensity (normalised)', fontsize=9)
+    cbar.ax.tick_params(labelsize=8)
+
+    ax.axvline(rsm.qx_substrate, color='#566273', lw=0.7, ls='--', label='pseudomorphic to the bottom layer')
+    for i, (_name, qx, qz) in enumerate(rsm.relaxed_points):
+        ax.plot(qx, qz, marker='o', ms=5, mfc='none', mec='#e34948', mew=1.0, ls='none',
+                label='fully relaxed alloy (numbered)' if i == 0 else None)
+        ax.annotate(str(i + 1), xy=(qx, qz), xytext=(7 if i % 2 == 0 else -7, 0),
+                    textcoords='offset points', ha='left' if i % 2 == 0 else 'right', va='center',
+                    fontsize=7.5, color='#17202c')
+    ax.text(0.015, 0.97, key, transform=ax.transAxes, ha='left', va='top',
+            fontsize=7.5, color='#17202c', bbox=box, linespacing=1.4)
+    ax.set_xlim(rsm.qx[0], rsm.qx[-1])
+    ax.set_ylim(rsm.qz[0], rsm.qz[-1])
+    ax.set_xlabel('$Q_x$ (Å$^{-1}$)', fontsize=11)
+    ax.set_ylabel('$Q_z$ (Å$^{-1}$)', fontsize=11)
+    ax.set_title(f'Reciprocal space map, {rsm.label} reflection', fontsize=10)
+    ax.legend(fontsize=8, loc='lower left', frameon=True)
+    return ax
+
+
+# ---------------------------------------------------------------------------
+# Growth under illumination (physics.dqfl)
+# ---------------------------------------------------------------------------
+
+def plot_illumination(res, fig) -> None:
+    """
+    physics.dqfl.simulate_illumination, layer by layer along the growth
+    axis: the photovoltage each layer develops while it is the growth
+    surface, and the factor by which each compensating defect's charged
+    state is reduced. Drawn into `fig` as two panels on a shared axis.
+    """
+    fig.clear()
+    ax1, ax2 = fig.subplots(2, 1, sharex=True)
+    hues = ['#2a78d6', '#eb6834', '#1baf7a', '#4a3aa7']
+    names = []
+    for layer in res.layers:
+        ax1.plot([layer.z0_nm, layer.z1_nm], [layer.Ep_eV, layer.Ep_eV], color='#17202c', lw=1.4,
+                 solid_capstyle='butt')
+        for d in layer.defects:
+            if d.compensator.name not in names:
+                names.append(d.compensator.name)
+    for layer in res.layers:
+        for d in layer.defects:
+            k = names.index(d.compensator.name)
+            ax2.plot([layer.z0_nm, layer.z1_nm], [d.factor, d.factor], color=hues[k % len(hues)], lw=1.6,
+                     solid_capstyle='butt', label=d.compensator.name)
+    handles, labels = ax2.get_legend_handles_labels()
+    seen = dict(zip(labels, handles))
+    if seen:
+        ax2.legend(seen.values(), seen.keys(), fontsize=8, loc='upper left', bbox_to_anchor=(1.02, 1.0),
+                   borderaxespad=0.0)
+        ax2.set_yscale('log')
+        lo = min(d.factor for layer in res.layers for d in layer.defects)
+        ax2.set_ylim(min(lo / 3.0, 0.1), 3.0)
+    else:
+        ax2.text(0.5, 0.5, 'No doped layers: nothing is compensated.', transform=ax2.transAxes,
+                 ha='center', va='center', fontsize=9, color='#566273')
+    ax2.axhline(1.0, color='#8892a0', lw=0.6, ls=':')
+    z_max = max((layer.z1_nm for layer in res.layers), default=1.0)
+    ax2.set_xlim(0.0, z_max)
+    ax1.set_ylim(0.0, max([layer.Ep_eV for layer in res.layers] + [0.1]) * 1.15)
+    ax1.set_ylabel('Photovoltage $E_{Fn}-E_{Fp}$ (eV)', fontsize=10)
+    ax2.set_ylabel('Charged defects: with light / without', fontsize=10)
+    ax2.set_xlabel('Position (nm)', fontsize=11)
+    ax1.set_title(f'Growth under illumination: {res.wavelength_nm:g} nm ({res.photon_eV:.2f} eV), '
+                  f'{res.power_W_cm2:g} W/cm$^2$, {res.T_K - 273.15:.0f} °C'
+                  '  (each layer as the free growth surface; no contacts)', fontsize=10)
+    for layer in res.layers:                 # layers the lamp does not reach
+        if layer.absorption_cm == 0.0:
+            ax1.axvspan(layer.z0_nm, layer.z1_nm, facecolor='none', edgecolor='#b7bec9', hatch='///', lw=0.0)
+    if any(layer.absorption_cm == 0.0 for layer in res.layers):
+        ax1.text(0.99, 0.95, 'hatched: gap wider than the photon energy, not absorbed', transform=ax1.transAxes,
+                 ha='right', va='top', fontsize=7.5, color='#566273')
+    for ax in (ax1, ax2):
+        ax.grid(True, which='major', alpha=0.3, lw=0.5)
+
+
+# ---------------------------------------------------------------------------
+# Bands under illumination through the top surface (physics.illumination)
+# ---------------------------------------------------------------------------
+
+def plot_illuminated_bands(res, fig) -> None:
+    """
+    physics.illumination.solve_illuminated: the band diagram in the dark
+    (dashed grey) and under light at open circuit (colour), and below it the
+    carrier densities the same way. The light enters at the right-hand end,
+    the top surface.
+    """
+    fig.clear()
+    ax1, ax2 = fig.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [3, 2]})
+    d, l = res.dark, res.light
+    x = np.asarray(l.x_nm)
+    grey = '#8892a0'
+    ax1.plot(x, d.Ec, color=grey, lw=0.9, ls=(0, (4, 2)), label='dark: $E_c$, $E_v$')
+    ax1.plot(x, d.Ev, color=grey, lw=0.9, ls=(0, (4, 2)))
+    ax1.plot(x, d.Efn, color=grey, lw=0.8, ls=(0, (1, 2)), label='dark: $E_F$')
+    ax1.plot(x, l.Ec, color=_COLORS['Ec'], lw=1.3, label='light: $E_c$')
+    ax1.plot(x, l.Ev, color=_COLORS['Ev'], lw=1.3, label='light: $E_v$')
+    ax1.plot(x, l.Efn, color='#17202c', lw=1.0, ls=(0, (7, 3)), label='light: $E_{Fn}$')
+    ax1.plot(x, l.Efp, color='#6b7483', lw=1.0, ls=(0, (2, 2)), label='light: $E_{Fp}$')
+    ax1.set_ylabel('Energy (eV)', fontsize=11)
+    ax1.legend(fontsize=8, loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
+    ax1.text(0.99, 0.96, '← light enters here (top surface)', transform=ax1.transAxes, ha='right', va='top',
+             fontsize=8, color='#566273')
+    state = 'open circuit' if res.converged else 'NOT CONVERGED'
+    ax1.set_title(f'Bands under {res.wavelength_nm:g} nm light ({res.photon_eV:.2f} eV), {res.power_W_cm2:g} W/cm$^2$, '
+                  f'{l.T - 273.15:.0f} °C: {state}, photovoltage {res.photovoltage_V:+.3g} V', fontsize=10)
+
+    floor = 1.0
+    ax2.semilogy(x, np.maximum(d.n, floor), color=grey, lw=0.9, ls=(0, (4, 2)), label='dark')
+    ax2.semilogy(x, np.maximum(d.p, floor), color=grey, lw=0.9, ls=(0, (4, 2)))
+    ax2.semilogy(x, np.maximum(l.n, floor), color=_COLORS['n'], lw=1.3, label='light: $n$')
+    ax2.semilogy(x, np.maximum(l.p, floor), color=_COLORS['p'], lw=1.3, label='light: $p$')
+    ax2.set_ylabel('Carriers (cm$^{-3}$)', fontsize=11)
+    ax2.set_xlabel('Position (nm)', fontsize=11)
+    ax2.legend(fontsize=8, loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
+    ax2.set_xlim(x[0], x[-1])
+    for ax in (ax1, ax2):
+        ax.grid(True, which='major', alpha=0.3, lw=0.5)

@@ -57,11 +57,17 @@ pip install -r requirements.txt
 python run_gui.py
 ```
 
-The desktop follows the familiar engineering-tool layout: a toolstrip (Home, Plots, View), a
-Device Stack panel, a Properties inspector, tabbed figures, a solver log and a status bar. Build a
-stack with Add Layer, set contacts and options in Properties, and press Run (F5) for one bias
-point or a voltage sweep. Panels can be dragged, floated or hidden; View > Default Layout
-restores them.
+The window follows the layout of established desktop scientific software: a menu bar and
+toolbar, a tabbed side panel (Structure, Simulation, Style), one large graphics area with a
+tool palette, and a text area underneath. The device is a layer table edited on the Structure
+page; Run (F5) solves the device at the applied bias; the toolbar switches between figures (bands,
+wavefunctions, carriers, field, polarization, strain, Stark effect, reciprocal space map), and the text area lists
+the solution (sheet densities, peak field, subband and transition energies) and the solver
+output. File > New from Template opens a ready-made HEMT, quantum well, deep-UV LED or p-n
+diode. With the Strain figure open, Calculate reciprocal space map simulates the X-ray map of the
+solved strain profile (kinematical approximation) for a chosen reflection. The Simulation page also has an Illumination box: Solve bands under light solves the band
+diagram with light of a given wavelength and power entering through the top surface, at open
+circuit, and compares it with the dark (`physics/illumination.py`). Figures export as PNG, PDF or SVG.
 
 **Python**
 
@@ -99,6 +105,8 @@ fractions (`x_Al`, `x_In`), thickness and doping. Useful device options:
 | `examples/02_quantum_well_stark_effect.py` | field, transition energy and overlap of GaN/AlN wells vs width |
 | `examples/03_surface_barrier_from_measurement.py` | surface barrier extracted from published thin-barrier Hall data |
 | `examples/04_pn_diode_under_bias.py` | forward current of a GaN p-n diode with the current-conservation check |
+| `examples/05_reciprocal_space_map.py` | X-ray reciprocal space map of thick Al0.6Ga0.4N on AlN, coherent vs relaxed, against Rathkanthiwar et al. (2022) |
+| `examples/06_defects_under_illumination.py` | command-line estimate of compensating-defect reduction by light during growth (`--help` for options; not in the GUI) |
 
 ## Tests
 

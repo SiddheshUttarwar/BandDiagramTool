@@ -38,7 +38,7 @@ from devices.layer import (
     SurfaceState, InterfaceDipole,
 )
 from gui.models import DeviceModel
-from gui import theme
+from gui import widgets
 
 _APPLY_DEBOUNCE_MS = 400
 
@@ -59,9 +59,34 @@ def _kind_of(layer) -> str:
     raise TypeError(f"Unknown layer type: {type(layer)}")
 
 
-class LayerEditorPanel(QtWidgets.QGroupBox):
+# Form keys (unchanged, _apply reads fields by them) -> (label shown, unit,
+# placeholder, tooltip).
+_FIELD_DISPLAY = {
+    "Al fraction (0-1)": ("Al fraction", "", "", "Aluminium mole fraction, 0 to 1"),
+    "In fraction (0-1)": ("In fraction", "", "", "Indium mole fraction, 0 to 1"),
+    "Al start (0-1)": ("Al at bottom", "", "", "Aluminium mole fraction at the bottom face, 0 to 1"),
+    "Al end (0-1)": ("Al at top", "", "", "Aluminium mole fraction at the top face, 0 to 1"),
+    "In start (0-1)": ("In at bottom", "", "", "Indium mole fraction at the bottom face, 0 to 1"),
+    "In end (0-1)": ("In at top", "", "", "Indium mole fraction at the top face, 0 to 1"),
+    "Thickness (nm)": ("Thickness", "nm", "", ""),
+    "n-doping (cm^-3)": ("Donors", "cm⁻³", "", "Donor concentration (n-type doping)"),
+    "p-doping (cm^-3)": ("Acceptors", "cm⁻³", "", "Acceptor concentration (p-type doping)"),
+    "Steps (if stepped)": ("Steps", "", "", "Number of steps, for the stepped profile"),
+    "Custom strain εxx (blank=auto, -=compressive, +=tensile)": (
+        "Strain εxx", "", "auto",
+        "In-plane strain. Leave blank to derive it from the lattice mismatch; "
+        "negative is compressive, positive tensile."),
+    "Series resistance (Ω·cm², 0=none)": ("Series resistance", "Ω·cm²", "", "0 = none"),
+    "Grid spacing (nm, blank=default)": ("Grid spacing", "nm", "default",
+                                         "Mesh spacing inside this layer. Leave blank for the global value."),
+    "Sheet charge (C/m^2)": ("Sheet charge", "C/m²", "", ""),
+    "Separation (nm)": ("Separation", "nm", "", ""),
+}
+
+
+class LayerEditorPanel(widgets.Section):
     def __init__(self, model: DeviceModel, parent=None):
-        super().__init__("Layer Properties", parent)
+        super().__init__("Selected layer", parent)
         self.model = model
         self.index: Optional[int] = None
         self._vars: dict = {}
@@ -70,9 +95,10 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         self._apply_timer.setSingleShot(True)
         self._apply_timer.timeout.connect(self._apply)
 
-        self._outer = QtWidgets.QVBoxLayout(self)
-        self._empty_label = QtWidgets.QLabel("Select a layer to edit.")
-        self._empty_label.setStyleSheet(f"color: {theme.TEXT_FAINT};")
+        self._outer = self.body
+        self._empty_label = QtWidgets.QLabel("Select a layer in the table to edit it.")
+        self._empty_label.setObjectName("empty")
+        self._empty_label.setWordWrap(True)
         self._outer.addWidget(self._empty_label)
 
         self._body = QtWidgets.QWidget()
@@ -101,6 +127,7 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         if index is None or index >= len(self.model.layers):
             self._body.setVisible(False)
             self._empty_label.setVisible(True)
+            self.set_meta("")
             return
 
         self._empty_label.setVisible(False)
@@ -108,16 +135,13 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
 
         layer = self.model.layers[index]
         kind = _kind_of(layer)
+        self.set_meta(f"Layer {index + 1} of {len(self.model.layers)}, counted from the substrate")
 
-        type_row = QtWidgets.QHBoxLayout()
-        type_row.addWidget(QtWidgets.QLabel(f"Layer #{index + 1} from bottom — type"))
         type_combo = QtWidgets.QComboBox()
         type_combo.addItems(_TYPE_NAMES)
         type_combo.setCurrentText(kind)
         type_combo.currentTextChanged.connect(self._switch_type)
-        type_row.addWidget(type_combo)
-        type_row.addStretch(1)
-        self._body_layout.addLayout(type_row)
+        self._body_layout.addLayout(widgets.form_row("Type", type_combo))
 
         if isinstance(layer, AbruptLayer):
             self._build_abrupt_form(layer)
@@ -143,6 +167,7 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         self._body = QtWidgets.QWidget()
         self._body_layout = QtWidgets.QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(7)
         self._outer.insertWidget(1, self._body)
         self._outer.removeWidget(old_body)
         old_body.setParent(None)
@@ -199,17 +224,20 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         self.show(self.index)
 
     # ------------------------------------------------------------------
+    def _subhead(self, text):
+        self._body_layout.addWidget(widgets.subhead(text))
+
+    def _note(self, text):
+        self._body_layout.addWidget(widgets.note(text))
+
     def _field(self, label, initial, kind="float"):
-        col = QtWidgets.QVBoxLayout()
-        col.setSpacing(2)
-        lbl = QtWidgets.QLabel(label)
-        lbl.setWordWrap(True)
-        lbl.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        col.addWidget(lbl)
+        shown, unit, placeholder, tip = _FIELD_DISPLAY.get(label, (label, "", "", ""))
+        if isinstance(initial, float):
+            initial = f"{initial:.10g}"
         edit = QtWidgets.QLineEdit(str(initial))
+        edit.setPlaceholderText(placeholder)
         edit.textEdited.connect(self._debounced_apply)
-        col.addWidget(edit)
-        self._body_layout.addLayout(col)
+        self._body_layout.addLayout(widgets.form_row(shown, edit, unit, tip))
         self._vars[label] = (edit, kind)
         return edit
 
@@ -225,12 +253,6 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         return cb
 
     def _choice_field(self, label, initial, choices, on_change=None):
-        col = QtWidgets.QVBoxLayout()
-        col.setSpacing(2)
-        lbl = QtWidgets.QLabel(label)
-        lbl.setWordWrap(True)
-        lbl.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        col.addWidget(lbl)
         combo = QtWidgets.QComboBox()
         combo.addItems(choices)
         combo.setCurrentText(initial)
@@ -240,8 +262,7 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
             if on_change:
                 on_change()
         combo.currentTextChanged.connect(_changed)
-        col.addWidget(combo)
-        self._body_layout.addLayout(col)
+        self._body_layout.addLayout(widgets.form_row(label, combo))
         self._vars[label] = (combo, "str")
         return combo
 
@@ -260,8 +281,10 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         if mat in ("InGaN", "InAlGaN"):
             self._field("In fraction (0-1)", getattr(layer, "x_In", 0.0))
         self._field("Thickness (nm)", layer.thickness_nm)
+        self._subhead("Doping")
         self._field("n-doping (cm^-3)", layer.n_doping)
         self._field("p-doping (cm^-3)", layer.p_doping)
+        self._subhead("Strain and mesh")
         self._bool_field("Strain-relaxed", layer.relaxed)
         self._field("Custom strain εxx (blank=auto, -=compressive, +=tensile)",
                      "" if layer.custom_strain_xx is None else layer.custom_strain_xx,
@@ -281,9 +304,11 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
             self._field("In end (0-1)", getattr(layer, "x_In_end", 0.0))
         self._field("Thickness (nm)", layer.thickness_nm)
         self._choice_field("Profile", layer.profile, ["linear", "parabolic", "stepped", "abrupt"])
+        self._field("Steps (if stepped)", layer.n_steps, kind="int")
+        self._subhead("Doping")
         self._field("n-doping (cm^-3)", layer.n_doping)
         self._field("p-doping (cm^-3)", layer.p_doping)
-        self._field("Steps (if stepped)", layer.n_steps, kind="int")
+        self._subhead("Strain and mesh")
         self._bool_field("Strain-relaxed", layer.relaxed)
         self._field("Custom strain εxx (blank=auto, -=compressive, +=tensile)",
                      "" if layer.custom_strain_xx is None else layer.custom_strain_xx,
@@ -300,12 +325,10 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         marker in the stack (physics.self_consistent uses their positions
         +/- 2nm padding instead of its automatic undoped-span heuristic).
         """
-        note = QtWidgets.QLabel(
-            "Marks a boundary of the quantum (Schrödinger-solved) region.\n"
-            "Place one 'start' and one 'end' marker in the stack; the solved\n"
-            "region spans 2nm before the start to 2nm after the end.")
-        note.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        self._body_layout.addWidget(note)
+        self._note(
+            "Marks a boundary of the region where the Schrödinger equation is solved. "
+            "Place one start and one end marker in the stack; the solved region runs "
+            "from 2 nm before the start to 2 nm after the end.")
         self._choice_field("Boundary", layer.boundary, ["start", "end"])
 
     def _build_interface_dipole_form(self, layer: InterfaceDipole):
@@ -313,11 +336,8 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         A fixed structural dipole at an interface: two equal-and-opposite
         sheet charges +/-sigma separated by a user-defined distance.
         """
-        note = QtWidgets.QLabel(
-            "Fixed dipole: two opposite sheet charges of magnitude\n"
-            "'Sheet charge' separated by 'Separation'.")
-        note.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        self._body_layout.addWidget(note)
+        self._note("A fixed dipole: two opposite sheet charges of the given magnitude, "
+                   "the given distance apart.")
         self._field("Sheet charge (C/m^2)", layer.sheet_charge_C_m2)
         self._field("Separation (nm)", layer.separation_nm)
 
@@ -328,23 +348,18 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         level (see physics.self_consistent) -- the areal-charge analogue of
         bulk donor/acceptor doping.
         """
-        note = QtWidgets.QLabel(
-            "One or more trap energy states at this interface, each\n"
-            "ionizing with the local Fermi level (donor: neutral filled,\n"
-            "+q ionized; acceptor: neutral empty, -q ionized).")
-        note.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        self._body_layout.addWidget(note)
+        self._note(
+            "Trap levels at this interface, each ionizing with the local Fermi level "
+            "(donor: neutral when filled, +q when ionized; acceptor: neutral when empty, "
+            "−q when ionized).")
 
         header = QtWidgets.QHBoxLayout()
-        h1 = QtWidgets.QLabel("Density (cm^-2)")
-        h1.setFixedWidth(90)
-        header.addWidget(h1)
-        h2 = QtWidgets.QLabel("Energy (eV)")
-        h2.setFixedWidth(65)
-        header.addWidget(h2)
-        h3 = QtWidgets.QLabel("Type")
-        h3.setFixedWidth(75)
-        header.addWidget(h3)
+        header.setSpacing(6)
+        for text, width in (("Density (cm⁻²)", 90), ("Energy (eV)", 65), ("Type", 85)):
+            h = QtWidgets.QLabel(text)
+            h.setObjectName("unit")
+            h.setFixedWidth(width)
+            header.addWidget(h)
         header.addStretch(1)
         self._body_layout.addLayout(header)
 
@@ -352,18 +367,17 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
         states = layer.states if layer.states else [SurfaceState(density_cm2=1e12)]
         for i, state in enumerate(states):
             row = QtWidgets.QHBoxLayout()
-            d_edit = QtWidgets.QLineEdit(str(state.density_cm2))
+            row.setSpacing(6)
+            d_edit = QtWidgets.QLineEdit(f"{state.density_cm2:.10g}")
             d_edit.setFixedWidth(90)
-            e_edit = QtWidgets.QLineEdit(str(state.energy_eV))
+            e_edit = QtWidgets.QLineEdit(f"{state.energy_eV:.10g}")
             e_edit.setFixedWidth(65)
             t_combo = QtWidgets.QComboBox()
             t_combo.addItems(["donor", "acceptor"])
             t_combo.setCurrentText(state.state_type)
             t_combo.setFixedWidth(85)
-            remove_btn = QtWidgets.QPushButton("Remove")
-            remove_btn.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
-                                      QtWidgets.QSizePolicy.Policy.Fixed)
-            remove_btn.clicked.connect(lambda _checked, i=i: self._remove_surface_state(i))
+            remove_btn = widgets.icon_button("close", "Remove this level",
+                                             lambda i=i: self._remove_surface_state(i), size=14)
 
             d_edit.textEdited.connect(self._debounced_apply)
             e_edit.textEdited.connect(self._debounced_apply)
@@ -377,7 +391,9 @@ class LayerEditorPanel(QtWidgets.QGroupBox):
             self._body_layout.addLayout(row)
             self._surface_rows.append((d_edit, e_edit, t_combo))
 
-        add_btn = QtWidgets.QPushButton("+ Add energy state")
+        add_btn = QtWidgets.QPushButton("+  Add level")
+        add_btn.setObjectName("link")
+        add_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self._add_surface_state)
         add_row = QtWidgets.QHBoxLayout()
         add_row.addWidget(add_btn)

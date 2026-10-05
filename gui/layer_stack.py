@@ -1,17 +1,18 @@
 """
-LayerStackPanel: a vertical, drag-to-reorder list of layer "cards" mirroring
-the device's physical cross-section (top layer's card drawn at the top of
-the window, bottom layer's card at the bottom) even though the underlying
-DeviceModel.layers list stays in the codebase's bottom->top convention
-(index 0 = substrate/bottom, matching devices.device.AlGaNDevice).
+LayerStackPanel: the device as a table, one row per layer, surface at the
+top and substrate at the bottom — although DeviceModel.layers stays in the
+codebase's bottom->top convention (index 0 = substrate, as in
+devices.device.AlGaNDevice).
 
-Reordering uses QListWidget's native internal-move drag & drop (dragging any
-part of a card moves it) rather than hand-rolled mouse tracking.
+Columns: position from the substrate, material (with its colour from
+theme.material_color), thickness and doping. Zero-thickness entries
+(quantum-region markers, surface states, interface dipoles) are single
+spanning rows. New / Delete / Up / Down act on the selected row.
 """
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -22,18 +23,13 @@ from devices.layer import (
 from gui.models import DeviceModel
 from gui import theme
 
-_CARD_BG = theme.CARD_BG
-_CARD_BG_SELECTED = theme.CARD_BG_SELECTED
-_CARD_BG_INTERFACE = theme.CARD_BG_INTERFACE   # zero-thickness interface layers get a tint
-_CARD_BG_INTERFACE_SELECTED = theme.CARD_BG_INTERFACE_SELECTED
-_CARD_BORDER = theme.CARD_BORDER
-_CARD_BORDER_SELECTED = theme.CARD_BORDER_SELECTED
-
 _INTERFACE_TYPES = (QuantumRegionMarker, SurfaceCharge, InterfaceDipole)
+_SUB = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+_ROLE_INDEX = QtCore.Qt.ItemDataRole.UserRole
 
 
 def _layer_summary(layer) -> tuple[str, str]:
-    """Return (title, subtitle) describing a layer for its card."""
+    """Return (title, subtitle) describing a layer in plain text."""
     if isinstance(layer, AbruptLayer):
         title = nitride_name(layer.x_Al, getattr(layer, "x_In", 0.0))
         bits = [f"{layer.thickness_nm:g} nm"]
@@ -43,7 +39,7 @@ def _layer_summary(layer) -> tuple[str, str]:
             bits.append(f"p={layer.p_doping:.1e}")
         return title, "  ·  ".join(bits)
     if isinstance(layer, GradedLayer):
-        title = (f"Graded {nitride_name(layer.x_Al_start, getattr(layer, 'x_In_start', 0.0))}"
+        title = (f"{nitride_name(layer.x_Al_start, getattr(layer, 'x_In_start', 0.0))}"
                  f" → {nitride_name(layer.x_Al_end, getattr(layer, 'x_In_end', 0.0))}")
         bits = [f"{layer.thickness_nm:g} nm", layer.profile]
         if layer.n_doping > 0:
@@ -52,83 +48,53 @@ def _layer_summary(layer) -> tuple[str, str]:
             bits.append(f"p={layer.p_doping:.1e}")
         return title, "  ·  ".join(bits)
     if isinstance(layer, QuantumRegionMarker):
-        title = "▶ Quantum region start" if layer.boundary == 'start' else "Quantum region end ◀"
-        return title, "marker · 0 nm"
+        return ("Quantum region start" if layer.boundary == 'start' else "Quantum region end"), ""
     if isinstance(layer, SurfaceCharge):
-        title = "Surface charge"
         n = len(layer.states)
-        bits = [f"{n} state{'s' if n != 1 else ''}"]
-        for s in layer.states[:3]:
-            bits.append(f"{s.state_type[0].upper()} {s.density_cm2:.1e}cm⁻² @{s.energy_eV:g}eV")
-        return title, "  ·  ".join(bits)
+        return "Surface states", f"{n} level{'s' if n != 1 else ''}"
     if isinstance(layer, InterfaceDipole):
-        title = "Interface dipole"
-        return title, f"±{layer.sheet_charge_C_m2:.2e} C/m²  ·  {layer.separation_nm:g} nm sep."
+        return "Interface dipole", f"{theme.sci(layer.sheet_charge_C_m2)} C/m²"
     return "Layer", ""
 
 
-class _Card(QtWidgets.QFrame):
-    clicked = QtCore.pyqtSignal()
-    delete_requested = QtCore.pyqtSignal()
+def layer_colors(layer) -> Optional[tuple[str, str]]:
+    """(colour at the bottom face, colour at the top face) of a physical
+    layer; None for zero-thickness entries."""
+    if isinstance(layer, AbruptLayer):
+        c = theme.material_color(layer.x_Al, getattr(layer, "x_In", 0.0))
+        return c, c
+    if isinstance(layer, GradedLayer):
+        return (theme.material_color(layer.x_Al_start, getattr(layer, "x_In_start", 0.0)),
+                theme.material_color(layer.x_Al_end, getattr(layer, "x_In_end", 0.0)))
+    return None
 
-    def __init__(self, title: str, subtitle: str, selected: bool, is_interface: bool,
-                 swatch: Optional[str] = None):
-        super().__init__()
-        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        if selected:
-            bg = _CARD_BG_INTERFACE_SELECTED if is_interface else _CARD_BG_SELECTED
-            border = _CARD_BORDER_SELECTED
-        else:
-            bg = _CARD_BG_INTERFACE if is_interface else _CARD_BG
-            border = _CARD_BORDER
-        # A flat row: 1px outline, and a left bar in the layer's material
-        # colour (see theme.material_color) so the stack reads as a cross
-        # section at a glance. Marker rows have no bar.
-        bar = swatch or "transparent"
-        self.setStyleSheet(
-            f"_Card {{ background-color: {bg}; border: 1px solid {border}; "
-            f"border-left: 5px solid {bar if swatch else border}; border-radius: 0px; }}")
 
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 4, 4)
-        layout.setSpacing(6)
+def _swatch(bottom: str, top: str) -> QtGui.QIcon:
+    pm = QtGui.QPixmap(28, 28)
+    pm.fill(QtCore.Qt.GlobalColor.transparent)
+    p = QtGui.QPainter(pm)
+    grad = QtGui.QLinearGradient(0, 3, 0, 25)
+    grad.setColorAt(0.0, QtGui.QColor(top))
+    grad.setColorAt(1.0, QtGui.QColor(bottom))
+    p.setPen(QtGui.QColor(theme.shade(bottom, 0.35)))
+    p.setBrush(grad)
+    p.drawRect(3, 3, 22, 22)
+    p.end()
+    return QtGui.QIcon(pm)
 
-        handle = QtWidgets.QLabel("⋮⋮")
-        handle.setToolTip("Drag to reorder")
-        handle.setStyleSheet(f"color: {theme.TEXT_FAINT}; border: none; background: transparent;")
-        layout.addWidget(handle)
 
-        text_col = QtWidgets.QVBoxLayout()
-        title_lbl = QtWidgets.QLabel(title)
-        title_lbl.setStyleSheet(
-            f"border: none; background: transparent; font-weight: 600; color: {theme.TEXT};")
-        text_col.addWidget(title_lbl)
-        if subtitle:
-            sub_lbl = QtWidgets.QLabel(subtitle)
-            sub_lbl.setStyleSheet(
-                f"border: none; background: transparent; color: {theme.TEXT_MUTED}; font-size: 8pt;")
-            text_col.addWidget(sub_lbl)
-        layout.addLayout(text_col, 1)
-
-        del_btn = QtWidgets.QToolButton()
-        del_btn.setText("✕")
-        del_btn.setStyleSheet(
-            f"QToolButton {{ border: none; background: transparent; color: {theme.TEXT_FAINT}; }}"
-            f"QToolButton:hover {{ background: {theme.DANGER_SOFT}; color: {theme.DANGER}; border-radius: 2px; }}")
-        del_btn.setToolTip("Delete this layer")
-        del_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        del_btn.clicked.connect(self.delete_requested.emit)
-        layout.addWidget(del_btn)
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
+def _doping_text(layer) -> str:
+    bits = []
+    if layer.n_doping > 0:
+        bits.append(f"n  {theme.sci(layer.n_doping, 1)}")
+    if layer.p_doping > 0:
+        bits.append(f"p  {theme.sci(layer.p_doping, 1)}")
+    return ",  ".join(bits) if bits else "—"
 
 
 class LayerStackPanel(QtWidgets.QWidget):
-    """on_select(index_or_None) fires when a card is clicked or dropped
-    after a drag (index is in the model's bottom->top list space)."""
+    """on_select(index_or_None) fires when the selected row changes (index
+    is in the model's bottom->top list space)."""
 
     def __init__(self, model: DeviceModel,
                  on_select: Callable[[Optional[int]], None], parent=None):
@@ -138,50 +104,66 @@ class LayerStackPanel(QtWidgets.QWidget):
         self.selected_index: Optional[int] = None
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(4, 4, 4, 4)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
 
-        header = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("Surface (top)")
-        title.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        header.addWidget(title)
-        header.addStretch(1)
+        self._summary = QtWidgets.QLabel("")
+        root.addWidget(self._summary)
 
-        add_btn = QtWidgets.QToolButton()
-        add_btn.setText("Add Layer")
-        add_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        add_btn.setMenu(self.build_add_menu(add_btn))
-        header.addWidget(add_btn)
-        root.addLayout(header)
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(6)
+        self._table = QtWidgets.QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["#", "Material", "d (nm)", "Doping"])
+        self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(22)
+        self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setShowGrid(True)
+        self._table.setIconSize(QtCore.QSize(14, 14))
+        self._table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        header = self._table.horizontalHeader()
+        header.setHighlightSections(False)
+        self._table.horizontalHeaderItem(3).setToolTip("Donor (n) or acceptor (p) concentration, cm⁻³")
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setMinimumHeight(232)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        row.addWidget(self._table, 1)
 
-        self._list = QtWidgets.QListWidget()
-        self._list.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
-        self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self._list.setStyleSheet(
-            f"QListWidget {{ background: {theme.SURFACE}; border: 1px solid {theme.BORDER}; }}")
-        self._list.setSpacing(1)
-        self._list.model().rowsMoved.connect(self._on_rows_moved)
-        root.addWidget(self._list, 1)
-
-        self._empty_label = QtWidgets.QLabel('No layers yet.\nUse "Add Layer" to build the stack,\nfrom the substrate upward.')
-        self._empty_label.setStyleSheet(f"color: {theme.TEXT_FAINT};")
-        self._empty_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._empty_label, 1)
-
-        footer = QtWidgets.QLabel("Substrate (bottom)")
-        footer.setStyleSheet(f"color: {theme.TEXT_MUTED};")
-        root.addWidget(footer)
+        buttons = QtWidgets.QVBoxLayout()
+        buttons.setSpacing(4)
+        self._new_btn = QtWidgets.QPushButton("New")
+        self._new_btn.setToolTip("Add a layer or interface on top of the stack")
+        self._new_btn.setMenu(self.build_add_menu(self._new_btn))
+        self._del_btn = QtWidgets.QPushButton("Delete")
+        self._del_btn.clicked.connect(lambda _c=False: self.delete_selected())
+        self._up_btn = QtWidgets.QPushButton("Up")
+        self._up_btn.setToolTip("Move the selected layer toward the surface")
+        self._up_btn.clicked.connect(lambda _c=False: self._move(+1))
+        self._down_btn = QtWidgets.QPushButton("Down")
+        self._down_btn.setToolTip("Move the selected layer toward the substrate")
+        self._down_btn.clicked.connect(lambda _c=False: self._move(-1))
+        for b in (self._new_btn, self._del_btn, self._up_btn, self._down_btn):
+            b.setFixedWidth(62)
+            buttons.addWidget(b)
+        buttons.addStretch(1)
+        row.addLayout(buttons)
+        root.addLayout(row, 1)
 
         self.refresh()
 
     # ------------------------------------------------------------------
     def build_add_menu(self, parent=None) -> QtWidgets.QMenu:
-        """The "Add Layer" menu, shared with the toolstrip button."""
+        """The "New" menu, shared with the main window's Edit menu."""
         menu = QtWidgets.QMenu(parent)
-        menu.addAction("Abrupt layer", self._add_abrupt)
+        menu.addAction("Layer", self._add_abrupt)
         menu.addAction("Graded layer", self._add_graded)
         menu.addSeparator()
         menu.addAction("Quantum region marker", self._add_quantum_marker)
-        menu.addAction("Surface charge", self._add_surface_charge)
+        menu.addAction("Surface states", self._add_surface_charge)
         menu.addAction("Interface dipole", self._add_interface_dipole)
         return menu
 
@@ -217,41 +199,83 @@ class LayerStackPanel(QtWidgets.QWidget):
         self.refresh()
         self.on_select(index)
 
-    def refresh(self):
+    def _on_selection_changed(self):
+        rows = self._table.selectionModel().selectedRows()
+        index = None
+        if rows:
+            item = self._table.item(rows[0].row(), 0)
+            index = item.data(_ROLE_INDEX) if item is not None else None
+        if index != self.selected_index:
+            self.selected_index = index
+            self._update_buttons()
+            self.on_select(index)
+
+    def _update_buttons(self):
         n = len(self.model.layers)
-        self._empty_label.setVisible(n == 0)
-        self._list.setVisible(n > 0)
+        has = self.selected_index is not None
+        self._del_btn.setEnabled(has)
+        self._up_btn.setEnabled(has and self.selected_index < n - 1)
+        self._down_btn.setEnabled(has and self.selected_index > 0)
 
-        self._list.blockSignals(True)
-        self._list.clear()
+    def refresh(self):
+        layers = self.model.layers
+        n = len(layers)
+        physical = [l for l in layers if not isinstance(l, _INTERFACE_TYPES)]
+        total = sum(l.thickness_nm for l in physical)
+        self._summary.setText(
+            f"{len(physical)} layer{'s' if len(physical) != 1 else ''}, {total:g} nm in total  "
+            f"(surface at top)" if physical else "No layers. Use New to add one.")
+
+        scroll = self._table.verticalScrollBar().value()
+        self._table.blockSignals(True)
+        self._table.clearSpans()
+        self._table.setRowCount(n)
+        right = int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         # Visual order is reversed vs. the bottom->top model list: the top
-        # layer (last in the list) is drawn first (at the top of the panel).
-        for model_index in range(n - 1, -1, -1):
-            self._build_card(model_index)
-        self._list.blockSignals(False)
+        # layer (last in the list) is the first row.
+        for row, model_index in enumerate(range(n - 1, -1, -1)):
+            layer = layers[model_index]
+            num = QtWidgets.QTableWidgetItem(str(model_index + 1))
+            num.setData(_ROLE_INDEX, model_index)
+            num.setTextAlignment(right)
+            num.setForeground(QtGui.QColor(theme.TEXT_FAINT))
+            self._table.setItem(row, 0, num)
+            title, sub = _layer_summary(layer)
+            if isinstance(layer, _INTERFACE_TYPES):
+                item = QtWidgets.QTableWidgetItem(f"— {title}{'  (' + sub + ')' if sub else ''} —")
+                font = item.font()
+                font.setItalic(True)
+                item.setFont(font)
+                item.setForeground(QtGui.QColor(theme.TEXT_MUTED))
+                self._table.setItem(row, 1, item)
+                self._table.setSpan(row, 1, 1, 3)
+                continue
+            name = QtWidgets.QTableWidgetItem(title.translate(_SUB))
+            name.setIcon(_swatch(*layer_colors(layer)))
+            self._table.setItem(row, 1, name)
+            thick = QtWidgets.QTableWidgetItem(f"{layer.thickness_nm:g}")
+            thick.setTextAlignment(right)
+            self._table.setItem(row, 2, thick)
+            self._table.setItem(row, 3, QtWidgets.QTableWidgetItem(_doping_text(layer)))
 
-    def _build_card(self, model_index: int):
-        layer = self.model.layers[model_index]
-        selected = (model_index == self.selected_index)
-        is_interface = isinstance(layer, _INTERFACE_TYPES)
-        title, subtitle = _layer_summary(layer)
+        if self.selected_index is not None and 0 <= self.selected_index < n:
+            self._table.selectRow(n - 1 - self.selected_index)
+        else:
+            self._table.clearSelection()
+        self._table.blockSignals(False)
+        self._table.verticalScrollBar().setValue(scroll)
+        self._update_buttons()
 
-        swatch = None
-        if isinstance(layer, AbruptLayer):
-            swatch = theme.material_color(layer.x_Al, getattr(layer, "x_In", 0.0))
-        elif isinstance(layer, GradedLayer):
-            swatch = theme.material_color(
-                0.5 * (layer.x_Al_start + layer.x_Al_end),
-                0.5 * (getattr(layer, "x_In_start", 0.0) + getattr(layer, "x_In_end", 0.0)))
-        card = _Card(title, subtitle, selected, is_interface, swatch)
-        card.clicked.connect(lambda i=model_index: self.select(i))
-        card.delete_requested.connect(lambda i=model_index: self._delete(i))
-
-        item = QtWidgets.QListWidgetItem()
-        item.setData(QtCore.Qt.ItemDataRole.UserRole, model_index)
-        item.setSizeHint(card.sizeHint())
-        self._list.addItem(item)
-        self._list.setItemWidget(item, card)
+    def _move(self, step: int):
+        i = self.selected_index
+        if i is None:
+            return
+        j = i + step
+        if not 0 <= j < len(self.model.layers):
+            return
+        self.selected_index = j
+        self.model.move_layer(i, j)
+        self.on_select(j)
 
     def _delete(self, model_index: int):
         self.model.remove_layer(model_index)
@@ -261,27 +285,3 @@ class LayerStackPanel(QtWidgets.QWidget):
         elif self.selected_index is not None and self.selected_index > model_index:
             self.selected_index -= 1
         self.refresh()
-
-    # ------------------------------------------------------------------
-    def _on_rows_moved(self, *_args):
-        """Fires after a drag-and-drop internal move completes. Reads the
-        list's current (top-of-screen-first) visual order back out via each
-        item's stored original model_index, rebuilds DeviceModel.layers to
-        match (bottom->top), and re-renders so every card's stored index is
-        fresh again."""
-        visual_order_old_indices = [
-            self._list.item(row).data(QtCore.Qt.ItemDataRole.UserRole)
-            for row in range(self._list.count())
-        ]
-        old_layers = self.model.layers
-        new_layers = [old_layers[i] for i in reversed(visual_order_old_indices)]
-        if new_layers == old_layers:
-            return
-
-        if self.selected_index is not None and self.selected_index < len(old_layers):
-            moved_layer = old_layers[self.selected_index]
-            self.selected_index = next(
-                i for i, layer in enumerate(new_layers) if layer is moved_layer)
-
-        self.model.layers = new_layers
-        self.model.notify()

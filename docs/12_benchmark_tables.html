@@ -1,0 +1,1392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmark tables · BandDiagramTool model reference</title>
+<meta name="description" content="Equations, parameters and algorithms of BandDiagramTool, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">BandDiagramTool <span>model reference</span></a>
+  <a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a>
+</header>
+<div class="layout">
+<aside class="side">
+  <details class="navbox" open>
+    <summary>Chapters</summary>
+    <ol class="nav">
+<li><a href="index.html"><span class="n"></span>Overview</a></li>
+<li><a href="01_structure_and_grid.html"><span class="n">1</span>Structure and grid</a></li>
+<li><a href="02_materials.html"><span class="n">2</span>Materials</a></li>
+<li><a href="03_strain.html"><span class="n">3</span>Strain</a></li>
+<li><a href="04_polarization.html"><span class="n">4</span>Polarization</a></li>
+<li><a href="05_electrostatics.html"><span class="n">5</span>Electrostatics</a></li>
+<li><a href="06_quantum.html"><span class="n">6</span>Quantum mechanics</a></li>
+<li><a href="07_currents.html"><span class="n">7</span>Currents</a></li>
+<li><a href="08_optics.html"><span class="n">8</span>Optics</a></li>
+<li><a href="09_solution_algorithms.html"><span class="n">9</span>Solution algorithms</a></li>
+<li><a href="10_validation.html"><span class="n">10</span>Validation</a></li>
+<li><a href="11_limits_and_comparison.html"><span class="n">11</span>Limits, and comparison with nextnano++</a></li>
+<li class="current"><a href="12_benchmark_tables.html" aria-current="page"><span class="n">A</span>Benchmark tables</a><ul class="sub"><li><a href="#band-gaps-and-bowing-14-papers-mean-8-4">Band gaps and bowing (14 papers, mean 8.4)</a></li><li><a href="#band-offsets-9-papers-mean-4-7">Band offsets (9 papers, mean 4.7)</a></li><li><a href="#dopant-energies-and-activation-9-papers-mean-9-3">Dopant energies and activation (9 papers, mean 9.3)</a></li><li><a href="#schottky-barriers-2-papers-mean-7-5">Schottky barriers (2 papers, mean 7.5)</a></li><li><a href="#polarization-charge-2-papers-mean-9-7">Polarization charge (2 papers, mean 9.7)</a></li><li><a href="#strain-and-lattice-1-papers-mean-8-1">Strain and lattice (1 papers, mean 8.1)</a></li><li><a href="#2d-electron-gases-hemts-39-papers-mean-7-2">2D electron gases (HEMTs) (39 papers, mean 7.2)</a></li><li><a href="#2d-hole-gases-4-papers-mean-8-8">2D hole gases (4 papers, mean 8.8)</a></li><li><a href="#polarization-doping-graded-layers-3-papers-mean-6-5">Polarization doping (graded layers) (3 papers, mean 6.5)</a></li><li><a href="#quantum-well-built-in-fields-10-papers-mean-6-7">Quantum-well built-in fields (10 papers, mean 6.7)</a></li><li><a href="#quantum-well-led-emission-7-papers-mean-5-0">Quantum-well / LED emission (7 papers, mean 5.0)</a></li><li><a href="#intersubband-transitions-2-papers-mean-7-5">Intersubband transitions (2 papers, mean 7.5)</a></li><li><a href="#notes-on-individual-rows">Notes on individual rows</a></li><li><a href="#papers-considered-and-left-out">Papers considered and left out</a></li></ul></li>
+    </ol>
+  </details>
+</aside>
+<main id="content">
+<article>
+<h1>A. Benchmark tables</h1>
+<p>Every paper of the literature benchmark of <a href="10_validation.html">chapter 10</a>: the structure or observable, the measured value, the value computed by the tool with default settings, the difference and the score. Where a row lists several values they are separated by slashes, in the same order in every column. Densities are in cm<sup>−2</sup> or cm<sup>−3</sup>, energies in eV, fields in MV/cm, thicknesses in nm.</p>
+<p>Confidence refers to the source, not to the tool: High means structure and value are stated in the paper; Medium means a dimension or doping level was assumed, or the value was read from a figure or abstract; Low means a major assumption.</p>
+<h2 id="band-gaps-and-bowing-14-papers-mean-8-4"><a class="anchor" href="#band-gaps-and-bowing-14-papers-mean-8-4" aria-label="Link to this section">#</a>Band gaps and bowing (14 papers, mean 8.4)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1969</td>
+<td>Maruska &amp; Tietjen, APL 15, 327 (1969)</td>
+<td>Vapor-grown GaN: room-temp band gap</td>
+<td>3.390</td>
+<td>3.390</td>
+<td>+0 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>1973</td>
+<td>Yim et al., JAP 44, 292 (1973)</td>
+<td>Epitaxial AlN: optical band gap</td>
+<td>6.200</td>
+<td>6.026</td>
+<td>-174 meV</td>
+<td>5.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>1974</td>
+<td>Monemar, PRB 10, 676 (1974)</td>
+<td>GaN fundamental gap at 1.6 K (PLE)</td>
+<td>3.503</td>
+<td>3.462</td>
+<td>-41 meV</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>1997</td>
+<td>Brunner et al., JAP 82, 5090 (1997)</td>
+<td>AlGaN band-gap bowing (MBE, 0&lt;=x&lt;=1)</td>
+<td>4.383</td>
+<td>4.458</td>
+<td>+75 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>1997</td>
+<td>Smith et al., APL 71, 635 (1997)</td>
+<td>MOCVD GaN: RT band-to-band transition</td>
+<td>3.429</td>
+<td>3.390</td>
+<td>-39 meV</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2002</td>
+<td>Davydov et al., pss(b) 229, R1 (2002)</td>
+<td>Hexagonal InN: PL band</td>
+<td>0.800</td>
+<td>0.690</td>
+<td>-110 meV</td>
+<td>7.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2002</td>
+<td>Matsuoka et al., APL 81, 1246 (2002)</td>
+<td>MOVPE wurtzite InN: RT photoluminescence</td>
+<td>0.760</td>
+<td>0.690</td>
+<td>-70 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2002</td>
+<td>Wu et al., APL 80, 3967 (2002)</td>
+<td>MBE InN: fundamental gap (absorption/PL/PR)</td>
+<td>0.750</td>
+<td>0.690</td>
+<td>-60 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2002</td>
+<td>Wu et al., APL 80, 4741 (2002)</td>
+<td>In(1-x)Ga(x)N band-gap bowing <em>(calibration source)</em></td>
+<td>1.737</td>
+<td>1.690</td>
+<td>-47 meV</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2003</td>
+<td>Li et al., APL 83, 5163 (2003)</td>
+<td>Wurtzite AlN: direct gap from deep-UV PL</td>
+<td>6.120</td>
+<td>6.118</td>
+<td>-2 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2004</td>
+<td>Chen, Skromme et al., APL 85, 4334 (2004)</td>
+<td>AlN A/B excitons (1.7 K reflectance)</td>
+<td>6.025 / 0.218</td>
+<td>6.118 / 0.163</td>
+<td>+93 meV / -55 meV</td>
+<td>8.5</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2004</td>
+<td>Nam et al., APL 85, 3489 (2004)</td>
+<td>AlN epilayer: free-exciton PL at 10 K</td>
+<td>6.027</td>
+<td>6.118</td>
+<td>+91 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2005</td>
+<td>Nepal et al., APL 87, 242104 (2005)</td>
+<td>AlGaN band gap vs x and T (deep-UV PL)</td>
+<td>4.270 / 5.770</td>
+<td>4.236 / 5.762</td>
+<td>-34 meV / -8 meV</td>
+<td>9.5</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2013</td>
+<td>Feneberg et al., APL 102, 052112 (2013)</td>
+<td>Bulk AlN: free-exciton fine structure</td>
+<td>6.040</td>
+<td>6.118</td>
+<td>+78 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="band-offsets-9-papers-mean-4-7"><a class="anchor" href="#band-offsets-9-papers-mean-4-7" aria-label="Link to this section">#</a>Band offsets (9 papers, mean 4.7)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1996</td>
+<td>Martin et al., APL 68, 2541 (1996)</td>
+<td>XPS valence-band offsets of InN/GaN/AlN</td>
+<td>1.050 / 0.700 / 1.810</td>
+<td>0.580 / 0.800 / 1.380</td>
+<td>-470 meV / +100 meV / -430 meV</td>
+<td>3.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>1997</td>
+<td>Sun et al., APL 70, 2978 (1997)</td>
+<td>GaN/In0.13Ga0.87N MQW: effective band discontinuities</td>
+<td>0.142 / 0.233</td>
+<td>0.434 / 0.075</td>
+<td>+291 meV / -157 meV</td>
+<td>4.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2001</td>
+<td>Hang et al., JAP 90, 1887 (2001)</td>
+<td>AlGaN/GaN (x&lt;=0.22) offset ratio from deep-level emission</td>
+<td>0.239</td>
+<td>0.207</td>
+<td>-31 meV</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2006</td>
+<td>Westmeyer et al., JAP 99, 013705 (2006)</td>
+<td>GaN/AlN offset from AlGaN exciton linewidth</td>
+<td>1.503</td>
+<td>1.836</td>
+<td>+333 meV</td>
+<td>3.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2007</td>
+<td>King et al., APL 90, 132105 (2007)</td>
+<td>InN/AlN band offsets (XPS)</td>
+<td>1.520 / 4.000</td>
+<td>1.380 / 3.956</td>
+<td>-140 meV / -44 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2007</td>
+<td>Mahmood et al., arXiv:0706.0583 (2007)</td>
+<td>InN/GaN offsets by internal photoemission</td>
+<td>0.850 / 1.820</td>
+<td>0.580 / 2.120</td>
+<td>-270 meV / +300 meV</td>
+<td>3.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2007</td>
+<td>Wang et al., APL 91, 232117 (2007)</td>
+<td>InN/GaN isotype junction: dEc from C-V + photocurrent</td>
+<td>1.680</td>
+<td>2.120</td>
+<td>+440 meV</td>
+<td>1.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2008</td>
+<td>King et al., PRB 78, 033308 (2008)</td>
+<td>InN/GaN band offsets (HR-XPS)</td>
+<td>2.220</td>
+<td>2.120</td>
+<td>-100 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2010</td>
+<td>Akazawa et al., APL 96, 132104 (2010)</td>
+<td>Lattice-matched In0.17Al0.83N/GaN band offsets (XPS)</td>
+<td>0.950</td>
+<td>0.654</td>
+<td>-296 meV</td>
+<td>3.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="dopant-energies-and-activation-9-papers-mean-9-3"><a class="anchor" href="#dopant-energies-and-activation-9-papers-mean-9-3" aria-label="Link to this section">#</a>Dopant energies and activation (9 papers, mean 9.3)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1996</td>
+<td>Goetz et al., APL 68, 3144 (1996)</td>
+<td>Si donor in GaN (variable-T Hall)</td>
+<td>0.015</td>
+<td>0.018</td>
+<td>+3 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2000</td>
+<td>Kaufmann et al., PRB 62, 10867 (2000)</td>
+<td>MOCVD GaN:Mg, max hole density</td>
+<td>6e+17</td>
+<td>5.65e+17</td>
+<td>-6%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2002</td>
+<td>Li et al., APL 80, 1210 (2002)</td>
+<td>Mg acceptor in AlxGa1-xN, x &lt;= 0.27 (PL + Hall)</td>
+<td>0.262 / 0.279 / 0.311</td>
+<td>0.245 / 0.255 / 0.262</td>
+<td>-17 meV / -24 meV / -49 meV</td>
+<td>9.7</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2003</td>
+<td>Nam et al., APL 83, 878 (2003)</td>
+<td>Mg acceptor level in AlN (deep-UV PL) <em>(calibration source)</em></td>
+<td>0.510</td>
+<td>0.510</td>
+<td>+0 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2004</td>
+<td>Nakarmi et al., APL 85, 3769 (2004)</td>
+<td>Si donor in Al-rich AlGaN (x = 0.7-1.0)</td>
+<td>0.023 / 0.041 / 0.180</td>
+<td>0.085 / 0.085 / 0.085</td>
+<td>+62 meV / +44 meV / -95 meV</td>
+<td>8.3</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2004</td>
+<td>Zhu et al., APL 85, 4669 (2004)</td>
+<td>Si donor in Al0.7Ga0.3N vs doping</td>
+<td>0.025</td>
+<td>0.085</td>
+<td>+60 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2005</td>
+<td>Nakarmi et al., APL 86, 092108 (2005)</td>
+<td>Mg acceptor in Al0.7Ga0.3N (high-T Hall)</td>
+<td>0.396</td>
+<td>0.408</td>
+<td>+12 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2007</td>
+<td>Khan et al., APL 91, 012101 (2007)</td>
+<td>Mg acceptor level in InN (PL)</td>
+<td>0.060</td>
+<td>0.035</td>
+<td>-25 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2009</td>
+<td>Pantha et al., APL 95, 261904 (2009)</td>
+<td>Mg acceptor in p-InGaN</td>
+<td>0.043</td>
+<td>0.107</td>
+<td>+64 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="schottky-barriers-2-papers-mean-7-5"><a class="anchor" href="#schottky-barriers-2-papers-mean-7-5" aria-label="Link to this section">#</a>Schottky barriers (2 papers, mean 7.5)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1996</td>
+<td>Schmitz et al., Semicond. Sci. Technol. 11, 1464 (1996)</td>
+<td>Ni, Pt, Pd, Au Schottky barriers on n-GaN</td>
+<td>1.040 / 1.085 / 1.005 / 0.925</td>
+<td>1.000 / 1.550 / 1.020 / 1.000</td>
+<td>-40 meV / +465 meV / +15 meV / +75 meV</td>
+<td>7.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2000</td>
+<td>Qiao et al., JAP 87, 801 (2000)</td>
+<td>Ni/AlGaN Schottky barrier vs Al fraction</td>
+<td>1.250 / 1.290</td>
+<td>1.148 / 1.245</td>
+<td>-102 meV / -45 meV</td>
+<td>8.0</td>
+<td>Medium</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="polarization-charge-2-papers-mean-9-7"><a class="anchor" href="#polarization-charge-2-papers-mean-9-7" aria-label="Link to this section">#</a>Polarization charge (2 papers, mean 9.7)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2002</td>
+<td>Miller et al., APL 80, 3551 (2002)</td>
+<td>AlGaN/GaN polarization charge by C-V profiling</td>
+<td>2.36e+12 / 6.79e+12 / 6.92e+12</td>
+<td>2.18e+12 / 5.43e+12 / 7.39e+12</td>
+<td>-8% / -20% / +7%</td>
+<td>9.3</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2003</td>
+<td>Heikman et al., JAP 93, 10114 (2003)</td>
+<td>Al0.32GaN/GaN interface polarization charge</td>
+<td>1.65e+13</td>
+<td>1.6e+13</td>
+<td>-3%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="strain-and-lattice-1-papers-mean-8-1"><a class="anchor" href="#strain-and-lattice-1-papers-mean-8-1" aria-label="Link to this section">#</a>Strain and lattice (1 papers, mean 8.1)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2022</td>
+<td>Rathkanthiwar et al., APL 120, 202105 (2022)</td>
+<td>Pseudomorphic Al0.6Ga0.4N (0.95-3.5 um) on bulk AlN: lattice + stress</td>
+<td>5.09 / 3.8 / 3.6 / 3.3</td>
+<td>5.09 / 4.64 / 4.64 / 4.64</td>
+<td>+0% / +22% / +29% / +41%</td>
+<td>8.1</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="2d-electron-gases-hemts-39-papers-mean-7-2"><a class="anchor" href="#2d-electron-gases-hemts-39-papers-mean-7-2" aria-label="Link to this section">#</a>2D electron gases (HEMTs) (39 papers, mean 7.2)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1992</td>
+<td>Khan et al., APL 60, 3027 (1992)</td>
+<td>First GaN/Al0.13GaN 2DEG (SdH)</td>
+<td>1e+11</td>
+<td>4.01e+12</td>
+<td>x40</td>
+<td>1.0</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>1997</td>
+<td>Li, Lin, Jiang, Khan &amp; Chen, JVST B 15, 1117 (1997)</td>
+<td>n-Al0.1GaN(25nm)/n-GaN(25nm) 2DEG, dark Hall</td>
+<td>8.5e+11</td>
+<td>2.6e+12</td>
+<td>x3.1</td>
+<td>1.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>1999</td>
+<td>Ambacher et al., JAP 85, 3222 (1999)</td>
+<td>Ga-face AlGaN/GaN 2DEG vs Al fraction</td>
+<td>6e+12 / 2e+13</td>
+<td>4.93e+12 / 1.31e+13</td>
+<td>-18% / -34%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2000</td>
+<td>Ibbetson et al., APL 77, 250 (2000)</td>
+<td>Al0.34GaN/GaN: critical barrier thickness</td>
+<td>3.50</td>
+<td>3.75</td>
+<td>+0.25 nm</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2006</td>
+<td>Biyikli et al., arXiv:cond-mat/0608274 (2006)</td>
+<td>GaN(3)/AlxGaN(25)/AlN(1)/GaN, dark, 1.6 K</td>
+<td>3e+12 / 1.6e+12</td>
+<td>1.04e+13 / 6.35e+12</td>
+<td>x3.5 / x4</td>
+<td>1.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2006</td>
+<td>Gonschorek et al., APL 89, 062106 (2006)</td>
+<td>Lattice-matched AlInN(13)/AlN(1)/GaN</td>
+<td>2.6e+13</td>
+<td>2.15e+13</td>
+<td>-17%</td>
+<td>8.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2007</td>
+<td>Cao &amp; Jena, APL 90, 182112 (2007)</td>
+<td>AlN/GaN 2DEG vs AlN thickness</td>
+<td>5e+12 / 3.5e+13 / 5e+13</td>
+<td>2.53e+13 / 4.2e+13 / 4.91e+13</td>
+<td>x5.1 / +20% / -2%</td>
+<td>6.7</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2008</td>
+<td>Cao et al., APL 92, 152112 (2008)</td>
+<td>Ultrathin AlN/GaN: 2.3 and 4.0 nm AlN</td>
+<td>1.45e+13 / 3.1e+13</td>
+<td>2.91e+13 / 4.2e+13</td>
+<td>+101% / +35%</td>
+<td>4.8</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2008</td>
+<td>Gonschorek et al., JAP 103, 093714 (2008)</td>
+<td>Al0.855In0.145N(6nm)/AlN(1nm)/GaN 2DEG</td>
+<td>1.7e+13</td>
+<td>2.36e+13</td>
+<td>+39%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2008</td>
+<td>Zimmermann et al., EDL 29, 661 (2008)</td>
+<td>AlN(3.5nm)/GaN insulated-gate HEMT</td>
+<td>2.7e+13</td>
+<td>3.92e+13</td>
+<td>+45%</td>
+<td>6.5</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2009</td>
+<td>Zimmermann et al., IJHSES 19, 153 (2009)</td>
+<td>AlN(4nm)/GaN all-binary HFET</td>
+<td>3.5e+13</td>
+<td>4.2e+13</td>
+<td>+20%</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2010</td>
+<td>Li et al., APL 97, 222110 (2010)</td>
+<td>Al0.72GaN/AlN(0.5)/GaN, total barrier 2.5-8 nm (MBE)</td>
+<td>4e+12 / 3.7e+13</td>
+<td>2.3e+13 / 3.51e+13</td>
+<td>x5.7 / -5%</td>
+<td>5.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2010</td>
+<td>Wang et al., EDL 31, 1383 (2010)</td>
+<td>InAlN(4.8)/AlN(1)/GaN</td>
+<td>2e+13</td>
+<td>1.74e+13</td>
+<td>-13%</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2011</td>
+<td>Cao et al., J. Cryst. Growth 323, 529 (2011)</td>
+<td>Flux-optimised AlN(2.3nm)/GaN</td>
+<td>1.1e+13</td>
+<td>2.91e+13</td>
+<td>+165%</td>
+<td>3.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2011</td>
+<td>Wang et al., EDL 32, 892 (2011)</td>
+<td>In0.17Al0.83N(9.8)/AlN(1)/GaN</td>
+<td>1.6e+13</td>
+<td>2.06e+13</td>
+<td>+29%</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2012</td>
+<td>Ganguly et al., APL 101, 253519 (2012)</td>
+<td>InAlN(7.5)/AlN(1)/GaN</td>
+<td>1.55e+13</td>
+<td>1.96e+13</td>
+<td>+26%</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2012</td>
+<td>Li et al., EDL 33, 661 (2012)</td>
+<td>GaN(2.5)/AlN(4.5)/GaN(23)/AlN QW FET</td>
+<td>1.77e+13</td>
+<td>1.68e+13</td>
+<td>-5%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2012</td>
+<td>Yue et al., EDL 33, 988 (2012)</td>
+<td>InAlN(7.5)/AlN(1.5)/GaN</td>
+<td>1.92e+13</td>
+<td>2.21e+13</td>
+<td>+15%</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2013</td>
+<td>Sensale-Rodriguez et al., Solid-State Electron. 80, 67 (2013)</td>
+<td>InAlN(8.7)/AlN(1)/GaN</td>
+<td>2.23e+13</td>
+<td>2.01e+13</td>
+<td>-10%</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2013</td>
+<td>Wang et al., APEX 6, 016503 (2013)</td>
+<td>InAlGaN(11)/AlN(1)/In0.05GaN(5) channel/GaN</td>
+<td>2.08e+13</td>
+<td>2.7e+13</td>
+<td>+30%</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2013</td>
+<td>Wang et al., EDL 34, 378 (2013)</td>
+<td>In0.13Al0.83Ga0.04N(11)/AlN(1)/GaN</td>
+<td>1.8e+13</td>
+<td>2.69e+13</td>
+<td>+50%</td>
+<td>6.5</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2014</td>
+<td>Ganguly et al., APEX 7, 105501 (2014)</td>
+<td>MBE GaN(2nm)/Al0.32GaN(20nm)/GaN on Si</td>
+<td>1.44e+13</td>
+<td>1.17e+13</td>
+<td>-19%</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2014</td>
+<td>Li et al., APL 104, 193506 (2014)</td>
+<td>GaN(1.5)/AlN(6)/GaN(30)/AlN QW FET</td>
+<td>2.2e+13</td>
+<td>2.62e+13</td>
+<td>+19%</td>
+<td>9.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2016</td>
+<td>Song et al., EDL 37, 16 (2016)</td>
+<td>GaN(1)/Al0.26GaN(20)/AlN(1)/GaN HEMT</td>
+<td>7.63e+12</td>
+<td>1.2e+13</td>
+<td>+58%</td>
+<td>5.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Condori Quispe et al., APL 111, 073102 (2017)</td>
+<td>GaN(2)/AlN(6)/GaN(30)/AlN, 3 substrates</td>
+<td>3.61e+13</td>
+<td>2.54e+13</td>
+<td>-30%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Luo et al., arXiv:1707.09065 (2017)</td>
+<td>GaN(1)/AlN(3.5)/GaN HEMT</td>
+<td>3e+13</td>
+<td>3.54e+13</td>
+<td>+18%</td>
+<td>9.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Qi et al., APL 110, 063501 (2017)</td>
+<td>GaN(1.5)/AlN(6)/GaN(28)/AlN on bulk AlN</td>
+<td>2.8e+13</td>
+<td>2.65e+13</td>
+<td>-5%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2018</td>
+<td>Lev et al., Nat. Commun. 9, 2653 (2018), arXiv:1804.08956</td>
+<td>Al0.45GaN(15)/AlN(1)/GaN</td>
+<td>2e+13</td>
+<td>2.21e+13</td>
+<td>+11%</td>
+<td>9.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2018</td>
+<td>Wang et al., PR Applied 9, 024006 (2018)</td>
+<td>Al0.83In0.17N(~7)/AlN(~1)/GaN</td>
+<td>1.95e+13</td>
+<td>1.92e+13</td>
+<td>-1%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2019</td>
+<td>Kargarrazi et al., arXiv:1903.00572 (2019)</td>
+<td>GaN(1)/Al0.25GaN(30)/AlN(1)/GaN on Si</td>
+<td>1e+13</td>
+<td>1.17e+13</td>
+<td>+17%</td>
+<td>9.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2020</td>
+<td>Cui et al., arXiv:2005.08423 (2020)</td>
+<td>GaN(2)/InAlN(8)/AlN(1)/GaN(15)/In0.12GaN(4)/GaN on Si</td>
+<td>2.28e+13</td>
+<td>1.86e+13</td>
+<td>-18%</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2021</td>
+<td>Cui et al., arXiv:2101.09760 (2021)</td>
+<td>GaN(2)/InAlN(5)/AlN(1)/GaN(15)/In0.12GaN(4)/GaN on Si</td>
+<td>1.71e+13</td>
+<td>1.64e+13</td>
+<td>-4%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2023</td>
+<td>Knight et al., JAP 134, 185701 (2023)</td>
+<td>AlxGaN(30nm)/GaN on SiC, x=0.07-0.42</td>
+<td>2.3e+12 / 6.5e+12 / 9.6e+12 / 1.45e+13</td>
+<td>1.38e+12 / 7.84e+12 / 1.26e+13 / 1.95e+13</td>
+<td>-40% / +21% / +31% / +34%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2023</td>
+<td>Mukhopadhyay et al., Crystals 13 (2023), arXiv:2304.05593</td>
+<td>Al0.36GaN/AlN/GaN HEMTs (5 samples)</td>
+<td>1.2e+13 / 1.12e+13 / 1.33e+13 / 1.46e+13 / 1.63e+13</td>
+<td>1.67e+13 / 1.79e+13 / 1.67e+13 / 1.72e+13 / 1.8e+13</td>
+<td>+39% / +60% / +26% / +18% / +11%</td>
+<td>7.5</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2024</td>
+<td>Chen et al., APL 124, 152111 (2024)</td>
+<td>AlN/GaN/AlN QW-HEMTs on bulk AlN (4 samples)</td>
+<td>1.99e+13 / 2.47e+13 / 3.68e+13 / 2.53e+13</td>
+<td>2.25e+13 / 2.8e+13 / 4.56e+13 / 3.45e+13</td>
+<td>+13% / +13% / +24% / +36%</td>
+<td>8.1</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2024</td>
+<td>Ghosh et al., Adv. Mater. 37, 2413127 (2025), arXiv:2407.09723</td>
+<td>Buffer-less AlxGaN(~20nm)/GaN on Si, x = 0.19-0.26</td>
+<td>5.6e+12 / 7e+12 / 8.9e+12</td>
+<td>5.91e+12 / 7.36e+12 / 9.38e+12</td>
+<td>+5% / +5% / +5%</td>
+<td>10.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2025</td>
+<td>Chen et al., arXiv:2502.07032 (2025)</td>
+<td>AlN(6)/GaN(20)/AlN QW on bulk AlN (SdH)</td>
+<td>2.04e+13</td>
+<td>2.8e+13</td>
+<td>+37%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2025</td>
+<td>Kim et al., arXiv:2506.16670 (2025)</td>
+<td>GaN(1)/AlN(6)/GaN(20)/AlN undoped QW HEMT</td>
+<td>1.8e+13</td>
+<td>2.8e+13</td>
+<td>+56%</td>
+<td>5.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2026</td>
+<td>Jamil et al., arXiv:2605.24221 (2026)</td>
+<td>AlN(25)/Al0.64GaN(22) channel/Al0.67GaN</td>
+<td>2.7e+13</td>
+<td>2.12e+13</td>
+<td>-21%</td>
+<td>8.0</td>
+<td>Medium</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="2d-hole-gases-4-papers-mean-8-8"><a class="anchor" href="#2d-hole-gases-4-papers-mean-8-8" aria-label="Link to this section">#</a>2D hole gases (4 papers, mean 8.8)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2010</td>
+<td>Nakajima et al., APEX 3, 121004 (2010)</td>
+<td>p-GaN(30)/Al0.23GaN(47)/GaN 2D hole gas</td>
+<td>1.1e+13</td>
+<td>7.65e+12</td>
+<td>-30%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2019</td>
+<td>Chaudhuri et al., Science 365, 1454 (2019)</td>
+<td>Undoped GaN(13nm)/AlN 2D hole gas</td>
+<td>4e+13</td>
+<td>4.23e+13</td>
+<td>+6%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2021</td>
+<td>Chaudhuri et al., JAP 130, 025703 (2021), arXiv:2106.15952</td>
+<td>GaN(15)/AlN 2DHG, 3 buffers</td>
+<td>5.48e+13 / 4.86e+13 / 5.24e+13</td>
+<td>4.4e+13 / 4.4e+13 / 4.4e+13</td>
+<td>-20% / -9% / -16%</td>
+<td>8.7</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2021</td>
+<td>Zhang et al., APL 119, 162104 (2021)</td>
+<td>GaN(13.5)/AlN 2DHG on bulk AlN</td>
+<td>4.7e+13</td>
+<td>4.28e+13</td>
+<td>-9%</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="polarization-doping-graded-layers-3-papers-mean-6-5"><a class="anchor" href="#polarization-doping-graded-layers-3-papers-mean-6-5" aria-label="Link to this section">#</a>Polarization doping (graded layers) (3 papers, mean 6.5)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2002</td>
+<td>Jena et al., APL 81, 4395 (2002)</td>
+<td>Polarization bulk-doped graded AlGaN + 2DEG control</td>
+<td>1.7e+12 / 7.8e+12 / 8.9e+12 / 7.8e+12</td>
+<td>2.33e+12 / 6.07e+12 / 1.04e+13 / 6.34e+12</td>
+<td>+37% / -22% / +17% / -19%</td>
+<td>7.9</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Zhu et al., APL (2017), arXiv:1704.03001</td>
+<td>Polarization-doped graded Al0-&gt;0.2GaN, 600 nm</td>
+<td>1e+17</td>
+<td>1.57e+17</td>
+<td>+57%</td>
+<td>5.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2023</td>
+<td>Agrawal et al., arXiv:2312.08487 (2023)</td>
+<td>Undoped Al0.95-&gt;0.65GaN (300 nm) polarization-doped p layer</td>
+<td>5.7e+17 / 4.780</td>
+<td>6.85e+17 / 5.025</td>
+<td>+20% / +245 meV</td>
+<td>6.5</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="quantum-well-built-in-fields-10-papers-mean-6-7"><a class="anchor" href="#quantum-well-built-in-fields-10-papers-mean-6-7" aria-label="Link to this section">#</a>Quantum-well built-in fields (10 papers, mean 6.7)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1997</td>
+<td>Takeuchi et al., JJAP 36, L382 (1997)</td>
+<td>Strained In0.13GaN/GaN QW: built-in field</td>
+<td>1.08</td>
+<td>2.43</td>
+<td>+125%</td>
+<td>3.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>1998</td>
+<td>Kim et al., APL 73, 3426 (1998)</td>
+<td>GaN/Al0.15GaN MQW (40 A wells): piezo field</td>
+<td>0.56</td>
+<td>1.09</td>
+<td>+94%</td>
+<td>5.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>1998</td>
+<td>Leroux et al., PRB 58, R13371 (1998)</td>
+<td>GaN/Al0.11GaN QWs: field from QCSE</td>
+<td>0.45</td>
+<td>0.759</td>
+<td>+69%</td>
+<td>5.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>1999</td>
+<td>Grandjean et al., JAP 86, 3714 (1999)</td>
+<td>GaN/Al0.27GaN QW built-in field</td>
+<td>1</td>
+<td>2.18</td>
+<td>+118%</td>
+<td>3.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2000</td>
+<td>Cai et al. (McCartney, Ponce), MRS Proc. 639 (2000)</td>
+<td>GaN/In0.15GaN(2.7nm)/GaN: electron holography</td>
+<td>2.2</td>
+<td>2.79</td>
+<td>+27%</td>
+<td>8.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2001</td>
+<td>Jho et al., PRB 64, 035334 (2001)</td>
+<td>In0.15GaN/GaN QW LED: field from bias-dependent PL</td>
+<td>2.1</td>
+<td>2.79</td>
+<td>+33%</td>
+<td>6.5</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2003</td>
+<td>Adelmann et al., APL (2003), cond-mat/0304124</td>
+<td>GaN/AlN QWs: internal field + PL energies</td>
+<td>9.2 / 4.200 / 2.300</td>
+<td>9.81 / 4.322 / 2.362</td>
+<td>+7% / +122 meV / +62 meV</td>
+<td>8.3</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2005</td>
+<td>Brown et al., APL 86, 131108 (2005)</td>
+<td>In0.1GaN QW p-i-n: reverse-bias photocurrent</td>
+<td>1.9</td>
+<td>1.89</td>
+<td>-1%</td>
+<td>10.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2006</td>
+<td>Al Tahtamouni et al., APL 89, 131922 (2006)</td>
+<td>AlN/Al0.65GaN QWs on AlN (Lw 1-3 nm)</td>
+<td>4</td>
+<td>4.89</td>
+<td>+22%</td>
+<td>8.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2006</td>
+<td>Brown et al., IEEE J. Quantum Electron. 42 (2006)</td>
+<td>In0.07GaN QWs (2-4 nm): unscreened field</td>
+<td>1.23</td>
+<td>1.33</td>
+<td>+8%</td>
+<td>10.0</td>
+<td>Medium</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="quantum-well-led-emission-7-papers-mean-5-0"><a class="anchor" href="#quantum-well-led-emission-7-papers-mean-5-0" aria-label="Link to this section">#</a>Quantum-well / LED emission (7 papers, mean 5.0)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2001</td>
+<td>Nam et al., APL 78, 3690 (2001)</td>
+<td>AlN/GaN MQW (26 A wells, 30 A barriers): 10 K PL</td>
+<td>4.039</td>
+<td>2.842</td>
+<td>-1197 meV</td>
+<td>1.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2006</td>
+<td>Taniyasu, Kasu &amp; Makimoto, Nature 441, 325 (2006)</td>
+<td>AlN p-i-n LED near-band-edge emission</td>
+<td>5.904</td>
+<td>6.026</td>
+<td>+122 meV</td>
+<td>7.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2016</td>
+<td>Zhang et al., arXiv:1609.06240 (2016)</td>
+<td>Al0.2GaN(2.5)/Al0.3GaN(7.5) UV-A LED</td>
+<td>3.815</td>
+<td>3.826</td>
+<td>+11 meV</td>
+<td>10.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Islam et al., APL 110, 041108 (2017)</td>
+<td>Monolayer GaN/AlN deep-UV LEDs</td>
+<td>5.340 / 5.040 / 4.592</td>
+<td>4.866 / 4.384 / 4.043</td>
+<td>-474 meV / -656 meV / -549 meV</td>
+<td>1.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Liu et al., APL 110, 071103 (2017)</td>
+<td>AlN-delta-GaN QW LED (3-4 ML GaN), 298 nm</td>
+<td>4.161</td>
+<td>4.043</td>
+<td>-118 meV</td>
+<td>7.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Zhang et al., APL 110, 201102 (2017), arXiv:1703.00117</td>
+<td>Al0.6GaN(2)/Al0.75GaN(6) tunnel-injected LED</td>
+<td>4.824</td>
+<td>4.887</td>
+<td>+62 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+<tr>
+<td>2018</td>
+<td>Liu et al., APL 112, 081101 (2018), arXiv:1708.03973</td>
+<td>Al0.77GaN(3)/AlN(6) MQW LED on AlN</td>
+<td>5.414</td>
+<td>4.886</td>
+<td>-528 meV</td>
+<td>1.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="intersubband-transitions-2-papers-mean-7-5"><a class="anchor" href="#intersubband-transitions-2-papers-mean-7-5" aria-label="Link to this section">#</a>Intersubband transitions (2 papers, mean 7.5)</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Paper</th>
+<th>Structure / observable</th>
+<th>Measured</th>
+<th>Tool</th>
+<th>Error</th>
+<th>Score</th>
+<th>Conf.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2006</td>
+<td>Tchernycheva et al., PRB 73, 125347 (2006)</td>
+<td>GaN/AlN MQW intersubband absorption</td>
+<td>0.932 / 0.649</td>
+<td>1.059 / 0.759</td>
+<td>+127 meV / +110 meV</td>
+<td>7.0</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>2010</td>
+<td>Berland et al., APL 97, 043507 (2010)</td>
+<td>AlN/GaN MQW intersubband absorption (3 samples)</td>
+<td>0.704 / 0.626 / 0.739</td>
+<td>0.802 / 0.690 / 0.825</td>
+<td>+98 meV / +64 meV / +86 meV</td>
+<td>8.0</td>
+<td>High</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="notes-on-individual-rows"><a class="anchor" href="#notes-on-individual-rows" aria-label="Link to this section">#</a>Notes on individual rows</h2>
+<ul>
+<li><strong>Yim et al., JAP 44, 292 (1973)</strong>: early absorption edge; modern RT value ~6.0-6.1 eV</li>
+<li><strong>Monemar, PRB 10, 676 (1974)</strong>: tests temperature dependence of Eg</li>
+<li><strong>Khan et al., APL 60, 3027 (1992)</strong>: barrier thickness/polarity not public: assumed 30 nm Ga-face Al0.13GaN on GaN</li>
+<li><strong>Goetz et al., APL 68, 3144 (1996)</strong>: Ed 12-17 meV; 15 meV used</li>
+<li><strong>Martin et al., APL 68, 2541 (1996)</strong>: InN/GaN 1.05+-0.25, GaN/AlN 0.70+-0.24, InN/AlN 1.81+-0.20 eV</li>
+<li><strong>Schmitz et al., Semicond. Sci. Technol. 11, 1464 (1996)</strong>: mean of the I-V and C-V values; tool = Schottky-Mott (no pinning)</li>
+<li><strong>Brunner et al., JAP 82, 5090 (1997)</strong>: compared as Eg(x=0.5) shift implied by bowing b: tool 0.7 eV vs measured 1.3+/-0.2 eV</li>
+<li><strong>Li, Lin, Jiang, Khan &amp; Chen, JVST B 15, 1117 (1997)</strong>: measured at 10 K (dark, read from Fig. 4); simulated at 77 K</li>
+<li><strong>Sun et al., APL 70, 2978 (1997)</strong>: from stimulated-emission shifts: dEc 130-155 meV, dEv 245-220 meV (strained wells)</li>
+<li><strong>Takeuchi et al., JJAP 36, L382 (1997)</strong>: 1.08 MV/cm (piezo field consistent with their PL well-width series); 3 nm QW in thick GaN assumed</li>
+<li><strong>Kim et al., APL 73, 3426 (1998)</strong>: lower limit 560 kV/cm</li>
+<li><strong>Leroux et al., PRB 58, R13371 (1998)</strong>: 450 kV/cm; single well between thick barriers assumed</li>
+<li><strong>Ambacher et al., JAP 85, 3222 (1999)</strong>: barriers 20-65 nm in paper; 30 nm assumed</li>
+<li><strong>Grandjean et al., JAP 86, 3714 (1999)</strong>: ~1 MV/cm reported at x=0.27; single 3 nm QW between thick barriers assumed</li>
+<li><strong>Cai et al. (McCartney, Ponce), MRS Proc. 639 (2000)</strong>: 2.2+-0.6 MV/cm</li>
+<li><strong>Ibbetson et al., APL 77, 250 (2000)</strong>: surface donors at 1.65 eV (paper); onset defined as n_s &gt; 1e11 cm^-2</li>
+<li><strong>Kaufmann et al., PRB 62, 10867 (2000)</strong>: p_max ~6e17 at [Mg]~2e19; tool has no self-compensation model</li>
+<li><strong>Qiao et al., JAP 87, 801 (2000)</strong>: internal photoemission: 1.25 eV (x=0.15), 1.29 eV (x=0.23); table columns read from the PDF text</li>
+<li><strong>Hang et al., JAP 90, 1887 (2001)</strong>: dEc:dEv = 65:35; scored as dEc at x = 0.2 with the tool gap difference</li>
+<li><strong>Jho et al., PRB 64, 035334 (2001)</strong>: 2.1+-0.2 MV/cm; 3 nm well assumed</li>
+<li><strong>Nam et al., APL 78, 3690 (2001)</strong>: n=1 interband transition 4.039 eV; 5-period MQW on AlN simulated at 300 K, V = 0</li>
+<li><strong>Davydov et al., pss(b) 229, R1 (2002)</strong>: PL band 0.75-0.85 eV close to the absorption edge; 0.80 used</li>
+<li><strong>Jena et al., APL 81, 4395 (2002)</strong>: 300 K Hall, Table I; surface at graded-layer top (Ambacher barrier)</li>
+<li><strong>Li et al., APL 80, 1210 (2002)</strong>: Ea = 0.262 / 0.279 / 0.311 eV at x = 0.22 / 0.25 / 0.27</li>
+<li><strong>Miller et al., APL 80, 3551 (2002)</strong>: sigma = 2.36 / 6.79 / 6.92 e12 cm^-2 at x = 0.05 / 0.12 / 0.16</li>
+<li><strong>Wu et al., APL 80, 3967 (2002)</strong>: paper: gap between 0.7 and 0.8 eV; mid value used</li>
+<li><strong>Wu et al., APL 80, 4741 (2002)</strong>: b = 1.43 eV; compared as Eg at x_In = 0.5 with the paper endpoints (3.42, 0.77 eV)</li>
+<li><strong>Adelmann et al., APL (2003), cond-mat/0304124</strong>: 9.2+/-1.0 MV/cm; PL 4.2 eV (0.7 nm) - 2.3 eV (2.6 nm); thick AlN barriers on AlN assumed</li>
+<li><strong>Heikman et al., JAP 93, 10114 (2003)</strong>: paper extracts sigma = 1.6-1.7e13 cm^-2 from thickness-dependent Hall</li>
+<li><strong>Li et al., APL 83, 5163 (2003)</strong>: low-temperature gap 6.12 eV (FX 6.033 eV + 80 meV binding)</li>
+<li><strong>Nam et al., APL 83, 878 (2003)</strong>: 0.51 eV; this value sets the tool Mg model end point</li>
+<li><strong>Chen, Skromme et al., APL 85, 4334 (2004)</strong>: A 6.025 eV, B 6.243 eV unstrained; A-B splitting tests the crystal-field model</li>
+<li><strong>Nakarmi et al., APL 85, 3769 (2004)</strong>: E0 = 23 / 41 / 180 meV at x = 0.70 / 0.77 / 1.0</li>
+<li><strong>Nam et al., APL 85, 3489 (2004)</strong>: excitonic emission; the tool has no exciton binding (about 80 meV in AlN)</li>
+<li><strong>Zhu et al., APL 85, 4669 (2004)</strong>: E0 = 25 meV at the lowest doping (2.6e19), falling to 10 meV</li>
+<li><strong>Brown et al., APL 86, 131108 (2005)</strong>: 1.9 MV/cm; 3 nm well assumed</li>
+<li><strong>Nakarmi et al., APL 86, 092108 (2005)</strong>: ~400 meV (396 meV with mobility T-dependence)</li>
+<li><strong>Nepal et al., APL 87, 242104 (2005)</strong>: 10 K PL peaks: 4.27 eV (x=0.38), 5.77 eV (x=0.90); bowing ~1 eV</li>
+<li><strong>Al Tahtamouni et al., APL 89, 131922 (2006)</strong>: polarization field ~4 MV/cm; 2 nm well, 10 nm AlN cap</li>
+<li><strong>Biyikli et al., arXiv:cond-mat/0608274 (2006)</strong>: ns 3.0e12 (x=0.25), 1.6e12 (x=0.15) before illumination; simulated at 77 K</li>
+<li><strong>Brown et al., IEEE J. Quantum Electron. 42 (2006)</strong>: ~1.23 MV/cm</li>
+<li><strong>Gonschorek et al., APL 89, 062106 (2006)</strong>: ns 2.6e13 for a 14 nm total barrier</li>
+<li><strong>Taniyasu, Kasu &amp; Makimoto, Nature 441, 325 (2006)</strong>: EL 210 nm = 5.90 eV (excitonic NBE); tool predicts ~Eg</li>
+<li><strong>Tchernycheva et al., PRB 73, 125347 (2006)</strong>: 1.33-1.91 um for wells 1-2.5 nm; end points used, 3 nm AlN barriers on AlN assumed</li>
+<li><strong>Westmeyer et al., JAP 99, 013705 (2006)</strong>: dEc = 57% of dEg (upper limit, indirect)</li>
+<li><strong>Cao &amp; Jena, APL 90, 182112 (2007)</strong>: RT n_s read from Fig. 2(a); free-surface barrier 3.0 eV (paper)</li>
+<li><strong>Khan et al., APL 91, 012101 (2007)</strong>: ~60 meV above the valence band</li>
+<li><strong>King et al., APL 90, 132105 (2007)</strong>: dEv 1.52+-0.17, dEc 4.0+-0.2 eV</li>
+<li><strong>Mahmood et al., arXiv:0706.0583 (2007)</strong>: dEv 0.85, dEc 1.82 eV</li>
+<li><strong>Wang et al., APL 91, 232117 (2007)</strong>: dEc = 1.68+-0.1 eV</li>
+<li><strong>Cao et al., APL 92, 152112 (2008)</strong>: RT ns 1.45e13 (2.3 nm), 3.1e13 (4.0 nm)</li>
+<li><strong>Gonschorek et al., JAP 103, 093714 (2008)</strong>: n_s = (1.7+/-0.1)e13 cm^-2; surface barrier from Ambacher rule on the Al fraction (no value given)</li>
+<li><strong>King et al., PRB 78, 033308 (2008)</strong>: dEv 0.58 eV sets the tool InN offset, so only dEc (2.22+-0.10 eV) is scored</li>
+<li><strong>Zimmermann et al., EDL 29, 661 (2008)</strong>: ns 2.7e13</li>
+<li><strong>Pantha et al., APL 95, 261904 (2009)</strong>: Ea = 43 meV in In0.35Ga0.65N</li>
+<li><strong>Zimmermann et al., IJHSES 19, 153 (2009)</strong>: ns 3.5e13</li>
+<li><strong>Akazawa et al., APL 96, 132104 (2010)</strong>: dEc 0.9-1.0 eV (dEv 0.2 eV was used to set the AlInN valence bowing, so only dEc is scored)</li>
+<li><strong>Berland et al., APL 97, 043507 (2010)</strong>: RT peak 704 / 626 / 739 meV for barrier/well 4.2/3.3, 2.8/3.6, 3.1/2.4 nm on GaN</li>
+<li><strong>Li et al., APL 97, 222110 (2010)</strong>: ns 4e12 at t = 2.5 nm rising to 3.7e13 at 8 nm (t includes the 0.5 nm AlN interlayer); Ambacher surface barrier. The paper itself finds no fixed barrier fits: extracted 3.5 -&gt; 2.2 eV</li>
+<li><strong>Nakajima et al., APEX 3, 121004 (2010)</strong>: p_s 1.1e13 at 298 K; Mg level not given, 1e19 assumed</li>
+<li><strong>Wang et al., EDL 31, 1383 (2010)</strong>: ns 2e13</li>
+<li><strong>Cao et al., J. Cryst. Growth 323, 529 (2011)</strong>: RT ns 1.1e13</li>
+<li><strong>Wang et al., EDL 32, 892 (2011)</strong>: ns 1.6e13 as grown (1.9e13 after plasma passivation)</li>
+<li><strong>Ganguly et al., APL 101, 253519 (2012)</strong>: ns 1.55e13</li>
+<li><strong>Li et al., EDL 33, 661 (2012)</strong>: ns 1.77e13 as grown</li>
+<li><strong>Yue et al., EDL 33, 988 (2012)</strong>: ns 1.92e13</li>
+<li><strong>Feneberg et al., APL 102, 052112 (2013)</strong>: Gamma5 exciton 6.040 eV at low T</li>
+<li><strong>Sensale-Rodriguez et al., Solid-State Electron. 80, 67 (2013)</strong>: ns 2.23e13 (D-mode wafer)</li>
+<li><strong>Wang et al., APEX 6, 016503 (2013)</strong>: ns 2.08e13</li>
+<li><strong>Wang et al., EDL 34, 378 (2013)</strong>: ns 1.8e13</li>
+<li><strong>Ganguly et al., APEX 7, 105501 (2014)</strong>: ns 1.44e13 at RT</li>
+<li><strong>Li et al., APL 104, 193506 (2014)</strong>: ns ~2.2e13 for the device heterostructure (30 nm well, 1.5/6 nm cap/barrier); surface barrier 1 eV (paper)</li>
+<li><strong>Song et al., EDL 37, 16 (2016)</strong>: ns 7.63e12 (non-alloyed)</li>
+<li><strong>Zhang et al., arXiv:1609.06240 (2016)</strong>: EL ~325 nm</li>
+<li><strong>Condori Quispe et al., APL 111, 073102 (2017)</strong>: Hall ns 2.81 / 4.78 / 3.24 e13 on nominally identical stacks; mean used</li>
+<li><strong>Islam et al., APL 110, 041108 (2017)</strong>: EL 5.34 eV (1-2 ML), 5.04 eV (2-3 ML), 4.59 eV (3-4 ML); effective-mass limit</li>
+<li><strong>Liu et al., APL 110, 071103 (2017)</strong>: 298 nm = 4.16 eV; 3.5 ML GaN between 2.5 nm AlN layers</li>
+<li><strong>Luo et al., arXiv:1707.09065 (2017)</strong>: ns ~3e13</li>
+<li><strong>Qi et al., APL 110, 063501 (2017)</strong>: ns 2.8e13 as grown</li>
+<li><strong>Zhang et al., APL 110, 201102 (2017), arXiv:1703.00117</strong>: EL 257 nm</li>
+<li><strong>Zhu et al., APL (2017), arXiv:1704.03001</strong>: measured n ~1e17 cm^-3 (with ~1e17 compensating centres reported)</li>
+<li><strong>Lev et al., Nat. Commun. 9, 2653 (2018), arXiv:1804.08956</strong>: Hall ns 2e13</li>
+<li><strong>Liu et al., APL 112, 081101 (2018), arXiv:1708.03973</strong>: EL 229 nm under injection; tool gives the unscreened V = 0 ground transition of the 3-period MQW</li>
+<li><strong>Wang et al., PR Applied 9, 024006 (2018)</strong>: ns 1.95e13 (sample A; sample B 1.53e13)</li>
+<li><strong>Chaudhuri et al., Science 365, 1454 (2019)</strong>: p ~4e13 cm^-2; GaN surface barrier from Ambacher rule (0.84 eV)</li>
+<li><strong>Kargarrazi et al., arXiv:1903.00572 (2019)</strong>: ns ~1e13</li>
+<li><strong>Cui et al., arXiv:2005.08423 (2020)</strong>: ns 2.28e13</li>
+<li><strong>Chaudhuri et al., JAP 130, 025703 (2021), arXiv:2106.15952</strong>: p_s 5.48 / 4.86 / 5.24 e13</li>
+<li><strong>Cui et al., arXiv:2101.09760 (2021)</strong>: ns 1.71e13 before gate dielectric</li>
+<li><strong>Zhang et al., APL 119, 162104 (2021)</strong>: p_s 4.7e13 at 290 K</li>
+<li><strong>Rathkanthiwar et al., APL 120, 202105 (2022)</strong>: c from (00.2) XRD/RSM; stress from wafer curvature (Stoney). Tool has no C11/C12, so stress uses the tool strain with Vurgaftman C11/C12; tool has no relaxation model</li>
+<li><strong>Agrawal et al., arXiv:2312.08487 (2023)</strong>: C-V hole density 5.7e17 cm^-3; EL 4.78 eV from n-Al0.7GaN</li>
+<li><strong>Knight et al., JAP 134, 185701 (2023)</strong>: THz optical-Hall n_s read from Fig. 4 (+/-15%)</li>
+<li><strong>Mukhopadhyay et al., Crystals 13 (2023), arXiv:2304.05593</strong>: Fe-buffer effect of UID thickness t1 not modelled</li>
+<li><strong>Chen et al., APL 124, 152111 (2024)</strong>: surface barrier 0.3 eV (paper); measured strain used for relaxed wells C, D</li>
+<li><strong>Ghosh et al., Adv. Mater. 37, 2413127 (2025), arXiv:2407.09723</strong>: ns 5.6e12 / 7.0e12 / 8.9e12; barrier thickness &quot;usually ~20 nm&quot;</li>
+<li><strong>Chen et al., arXiv:2502.07032 (2025)</strong>: Hall ns 2.04e13; 1 nm GaN cap and 0.3 eV surface barrier assumed as in Chen 2024</li>
+<li><strong>Kim et al., arXiv:2506.16670 (2025)</strong>: ns 1.80e13; 0.3 eV surface barrier as in Chen 2024 (same group)</li>
+<li><strong>Jamil et al., arXiv:2605.24221 (2026)</strong>: ns 2.7e13; digital-alloy channel treated as random Al0.64GaN</li>
+</ul>
+<h2 id="papers-considered-and-left-out"><a class="anchor" href="#papers-considered-and-left-out" aria-label="Link to this section">#</a>Papers considered and left out</h2>
+<ul>
+<li>Shen 2001, Smorchkova 1999, Elsass 1999, Palacios 2006, Dadgar 2004, Higashiwaki 2006: full text not accessible, so the layer stack or the density could not be verified.</li>
+<li>Xie 2007: density found, barrier thickness not.</li>
+<li>Hang 2001 (Appl. Phys. Lett. 79, 66): doped-barrier 2DEG, doping level not stated.</li>
+<li>Kumar 2018, Zimmermann 2011: the 2DEG is set by a dielectric cap the tool does not model.</li>
+<li>Schmult 2018: the result is the absence of a 2DEG, which a ratio score cannot express.</li>
+<li>Simon 2010 (N-polar polarization-doped p-type): hole densities are given only in a figure.</li>
+<li>Sedhain 2008 (Be in AlN), Nepal 2006 (Zn in AlN): dopants the tool does not have.</li>
+</ul>
+
+</article>
+<nav class="pager" aria-label="Chapter">
+<a class="prev" href="11_limits_and_comparison.html"><span>Previous</span>Limits, and comparison with nextnano++</a>
+<span></span>
+</nav>
+<footer>Equations are typeset at build time with MathJax.</footer>
+</main>
+</div>
+<script>
+// collapse the chapter list by default on narrow screens
+if (window.matchMedia('(max-width: 900px)').matches) document.querySelector('.navbox').removeAttribute('open');
+</script>
+</body>
+</html>

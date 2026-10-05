@@ -126,7 +126,7 @@ mjx-container svg { color: var(--text); }
 .table-wrap { overflow-x: auto; margin: 0 0 1.2rem; }
 table { border-collapse: collapse; font-size: 15px; line-height: 1.45; min-width: 60%; }
 th, td { padding: 7px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-th { font-weight: 650; border-bottom: 2px solid var(--line); white-space: nowrap; }
+th { font-weight: 650; border-bottom: 2px solid var(--line); vertical-align: bottom; }
 td { font-variant-numeric: tabular-nums; }
 tbody tr:hover { background: var(--panel); }
 

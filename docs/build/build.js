@@ -35,7 +35,7 @@ const files = fs.readdirSync(SRC).filter(f => f.endsWith('.md')).sort((a, b) =>
 const pages = files.map(f => {
   const text = fs.readFileSync(path.join(SRC, f), 'utf8').replace(/\r\n/g, '\n');
   const h1 = (text.match(/^# (.+)$/m) || [, f])[1];
-  return {file: f, out: outName(f), text, title: h1.replace(/^\d+\.\s*/, ''), num: (h1.match(/^(\d+)\./) || [])[1]};
+  return {file: f, out: outName(f), text, title: h1.replace(/^(\d+|[A-Z])\.\s*/, ''), num: (h1.match(/^(\d+|[A-Z])\./) || [])[1]};
 });
 
 // equation number -> page that defines it
@@ -78,8 +78,8 @@ function renderPage(p) {
     keep(`<span class="m" role="img" aria-label="${esc(src)}">${typeset(src, false)}</span>`));
   // inline code is protected from the reference linker below
   t = t.replace(/`[^`\n]+`/g, m => keep(md.renderInline(m)));
-  // equation references "(5.14)" -> links
-  t = t.replace(/\((\d{1,2}\.\d{1,2})\)/g, (m, n) => {
+  // equation references "(5.14)" -> links (not layer thicknesses such as "AlN(4.5)")
+  t = t.replace(/(?<![A-Za-z0-9])\((\d{1,2}\.\d{1,2})\)/g, (m, n) => {
     if (!eqHome[n]) return m;
     const href = (eqHome[n] === p.out ? '' : eqHome[n]) + `#eq-${n.replace('.', '-')}`;
     return keep(`<a class="eqref" href="${href}">(${n})</a>`);

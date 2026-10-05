@@ -105,6 +105,33 @@ class SettingsPanel(QtWidgets.QGroupBox):
         psp_cb.toggled.connect(lambda v: self._set("include_spontaneous_polarization", v))
         layout.addWidget(psp_cb)
 
+        # Crystal polarity and polarization parameter set
+        pol_row = QtWidgets.QHBoxLayout()
+        pol_row.addWidget(QtWidgets.QLabel("Polarity"))
+        polarity_combo = QtWidgets.QComboBox()
+        for label, value in (("Metal-polar [0001]", "metal"), ("N-polar [000-1]", "N")):
+            polarity_combo.addItem(label, value)
+        polarity_combo.setCurrentIndex(max(0, polarity_combo.findData(s.polarity)))
+        polarity_combo.setToolTip("N-polar growth reverses the polarization along the growth axis.")
+        polarity_combo.currentIndexChanged.connect(
+            lambda _i, c=polarity_combo: self._set("polarity", c.currentData()))
+        pol_row.addWidget(polarity_combo, 1)
+        layout.addLayout(pol_row)
+
+        model_row = QtWidgets.QHBoxLayout()
+        model_row.addWidget(QtWidgets.QLabel("Polarization constants"))
+        model_combo = QtWidgets.QComboBox()
+        for label, value in (("Ambacher 2002 (default)", "ambacher2002"), ("Dreyer 2016", "dreyer2016")):
+            model_combo.addItem(label, value)
+        model_combo.setCurrentIndex(max(0, model_combo.findData(s.polarization_model)))
+        model_combo.setToolTip(
+            "Ambacher 2002: zincblende-referenced Psp with proper piezoelectric constants. "
+            "Dreyer 2016: hexagonal-referenced Psp with improper e31 (PRX 6, 021038).")
+        model_combo.currentIndexChanged.connect(
+            lambda _i, c=model_combo: self._set("polarization_model", c.currentData()))
+        model_row.addWidget(model_combo, 1)
+        layout.addLayout(model_row)
+
         layout.addWidget(self._separator())
 
         # --- Bias controls (sweep toggle + single/sweep fields) ---

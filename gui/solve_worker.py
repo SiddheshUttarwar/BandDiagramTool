@@ -31,6 +31,8 @@ class SolveRequest:
     T: float
     dx_nm: float
     include_spontaneous_polarization: bool
+    polarity: str
+    polarization_model: str
     quantum: bool
     flat_qfl: bool
     n_states_e: int
@@ -130,7 +132,9 @@ class SolveWorker:
     def _run_classical(self, req: SolveRequest, log_fn) -> None:
         device = AlGaNDevice(layers=req.layers, contacts=req.contacts,
                               T=req.T, dx_nm=req.dx_nm,
-                              include_spontaneous_polarization=req.include_spontaneous_polarization)
+                              include_spontaneous_polarization=req.include_spontaneous_polarization,
+                              polarity=req.polarity,
+                              polarization_model=req.polarization_model)
         if req.sweep:
             results = device.sweep_voltage(
                 req.V_start, req.V_stop, n_steps=req.n_steps,

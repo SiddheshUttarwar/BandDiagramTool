@@ -5,7 +5,7 @@ Define your device here and run:
     python main.py
 
 The device structure is fully user-defined via the layer list.
-See examples/example_led.py for a detailed worked example.
+See examples/ for worked examples and the README for the API.
 """
 
 import matplotlib

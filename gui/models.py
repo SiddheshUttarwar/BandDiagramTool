@@ -27,6 +27,8 @@ class SolveSettings:
     # interior node, no current) -- see solve_self_consistent(flat_qfl=).
     flat_qfl: bool = False
     include_spontaneous_polarization: bool = True
+    polarity: str = 'metal'                       # 'metal' | 'N' (growth along [000-1])
+    polarization_model: str = 'ambacher2002'      # 'ambacher2002' | 'dreyer2016'
     n_states_e: int = 16
     n_states_h: int = 16
     max_iter: int = 5000

@@ -134,6 +134,7 @@ class App(QtWidgets.QMainWindow):
             contacts=list(self.model.contacts),
             T=s.T, dx_nm=s.dx_nm,
             include_spontaneous_polarization=s.include_spontaneous_polarization,
+            polarity=s.polarity, polarization_model=s.polarization_model,
             quantum=s.quantum,
             flat_qfl=s.flat_qfl,
             n_states_e=s.n_states_e, n_states_h=s.n_states_h,

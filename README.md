@@ -27,7 +27,7 @@ lists what is left out and compares the models with nextnano++ feature by featur
 |---|---|
 | Numerics vs nextnano++ (12 structures, same parameters) | sheet densities within 3%; band edges within about 10 meV where the comparison grid resolves the structure |
 | 102 published experiments, 153 measured values, default settings, nothing tuned per paper | 7.2 / 10 overall |
-| 2DEG sheet density (56 values) | median 20% above measurement; 59% within 30%, 86% within a factor of two |
+| 2DEG sheet density (56 values) | median 20% above measurement; 57% within 30%, 86% within a factor of two |
 | Dopant levels, polarization charge, hole gases | within 20% or 50 meV |
 | Weakest areas | band offsets involving InN; emission energy of monolayer wells and of LEDs under injection; forward prediction for barriers thinner than about 4 nm |
 

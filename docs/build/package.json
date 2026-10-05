@@ -1,0 +1,12 @@
+{
+  "name": "banddiagramtool-docs",
+  "private": true,
+  "description": "Builds docs/*.html from docs/math/*.md with equations pre-rendered to SVG.",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0",
+    "mathjax-full": "^3.2.2"
+  }
+}

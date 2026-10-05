@@ -26,3 +26,6 @@ pyinstaller_rebuild.log
 
 # Local validation benchmarks (nextnano++ comparison, literature) - kept out of the repo
 /benchmarks/
+
+# Docs site build dependencies (cd docs/build && npm install)
+/docs/build/node_modules/

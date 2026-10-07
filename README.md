@@ -174,13 +174,51 @@ On the **Simulation** tab:
 |---|---|
 | Temperature | in K; band gaps follow it |
 | Grid spacing | default mesh spacing in nm |
-| Applied bias | in V; 0 solves equilibrium, anything else runs drift-diffusion |
+| Applied bias | in V, applied to the top contact; 0 solves equilibrium |
+| Bias model | how the quasi-Fermi levels are found under bias (see below) |
+| Insulator gap | only for the nextnano++ Fermi level; 1 eV is nextnano++'s default |
 | Schrödinger–Poisson (quantum) | solve for confined states in the quantum region |
 | Spontaneous polarization | include it in addition to the piezoelectric part |
 | Flat quasi-Fermi levels | band diagram under bias without solving for current; fast and robust |
 | Polarity | metal-polar [0001] or N-polar [000-1] |
 | Polarization set | Ambacher 2002 (default) or Dreyer 2016 constants |
 | Solver settings | iteration limit, tolerance, damping, number of subbands |
+
+#### Bias models
+
+The bias is applied to the top contact; the bottom contact stays at 0. A positive voltage lowers
+the top contact's Fermi level by that many eV.
+
+| Bias model | What it does | Use it for |
+|---|---|---|
+| Automatic (default) | gate voltage when the top contact is a Schottky contact on an undoped or lightly doped layer of a structure that is not a p–n diode; current otherwise | everything, unless you know you want one of the others |
+| Gate voltage | no current. The channel and everything below it keep the source Fermi level (0); across the depleted barrier above the channel the level goes in a straight line to the gate's value | HEMTs and other gated structures |
+| Current (drift-diffusion) | solves the current equations between the two contacts; the electron and hole quasi-Fermi levels follow from current continuity | LEDs, lasers, p–n and Schottky diodes |
+| nextnano++ Fermi level | one Fermi level interpolated between the two contacts, weighted by exp(E<sub>g</sub> / insulator gap), as nextnano++ draws it when it does not solve the current equation | comparing with a nextnano++ Poisson-only bias sweep |
+
+Why a transistor needs the gate model: in a HEMT the channel is held at the source potential by
+its lateral contacts, which a one-dimensional stack does not contain. In an AlN/GaN/AlN structure
+the channel has no path to either contact of the stack, and a vertical current solve lets it
+drift up to the gate's level, so that it is never depleted. With the gate model a negative gate
+voltage depletes the electron gas and pinches it off.
+
+Things the program tells you in the Summary pane rather than hiding:
+
+- **Bias mode**: which of the models was used.
+- **Gate turned on**: a gate forward-biased beyond its own barrier height conducts. No
+  current-free band diagram exists for the excess voltage, so the structure is shown at the
+  turn-on limit and the Summary says at which voltage.
+- **Minimum density in the current equation**: in a current solve, a layer cut off from both
+  contacts has a quasi-Fermi level that the equations cannot fix. The solver then gives the flux
+  a small minimum carrier density, converges, and says so. Bands and densities are reliable; a
+  current of that size is the leakage of the minimum density, not a prediction.
+- **Current below the numerical resolution**: printed instead of a number when the current is
+  too small to be conserved by the arithmetic.
+
+The nextnano++ Fermi level is a drawing rule, not a transport result. With the default 1 eV it
+ramps almost linearly across the whole structure, so in a HEMT the channel follows the gate and
+the electron gas hardly responds to the gate voltage; 0.05 eV keeps it flat in the narrow-gap
+layers and puts the drop in the barrier.
 
 ### 3. Run
 
@@ -195,11 +233,11 @@ Switch figures with the toolbar buttons, the **View** menu, or **Ctrl+1** to **C
 
 | Figure | Shows |
 |---|---|
-| Bands | conduction and valence band edges, heavy-hole / light-hole / split-off edges, quasi-Fermi levels |
+| Bands | conduction and valence band edges, heavy-hole / light-hole / split-off edges, quasi-Fermi levels. Under bias each quasi-Fermi level is drawn only where its carriers exist |
 | Wavefunctions | confined-state probability densities on the band diagram (needs quantum on) |
 | Carriers | electron and hole density on a log scale |
 | Recombination | Shockley-Read-Hall, radiative and Auger rates on a log scale (dashed where a rate is net generation) |
-| Field | electric field; the quasi-electric field of a composition gradient is drawn for reference |
+| Field | electric field F, polarization field −P/ε, and on the right-hand axis the displacement D = εF + P, which is flat wherever there is no free charge; the quasi-electric field of a composition gradient is drawn for reference |
 | Polarization | spontaneous, piezoelectric and total polarization |
 | Strain | in-plane and out-of-plane strain |
 | Stark | transition energy and electron–hole overlap of the quantum well |
@@ -383,7 +421,9 @@ print(result.qcse_transition_eV)           # 0.80 eV, 1.55 µm
 | `AlGaNDevice(..., polarization_model='dreyer2016')` | Dreyer 2016 constants; default is Ambacher 2002 |
 | `AlGaNDevice(..., recombination={'tau_n': 5e-9, 'B_rad': 2e-10})` | replace recombination coefficients in every layer: `tau_n`, `tau_p` in s, `B_rad` in cm³/s, `C_n`, `C_p` in cm⁶/s |
 | `solve(quantum=True)` | include the Schrödinger equation |
-| `solve(V_applied=V)` | drift-diffusion solve under bias |
+| `solve(V_applied=V)` | solve under bias with the automatic bias model: gate voltage for a Schottky top contact on an undoped layer, drift-diffusion current otherwise |
+| `solve(V_applied=V, gate_bias=True)` | gate voltage: no current, channel at the source Fermi level; `gate_bias=False` forces the drift-diffusion current |
+| `solve(V_applied=V, interpolated_qfl=1.0)` | nextnano++-style interpolated Fermi level; the number is the insulator gap in eV |
 | `solve(V_applied=V, flat_qfl=True)` | band diagram under bias without solving for current |
 | `solve(verbose=True)` | print the iteration log |
 
@@ -401,7 +441,10 @@ print(result.qcse_transition_eV)           # 0.80 eV, 1.55 µm
 | `eps_xx`, `eps_zz` | strain |
 | `E_e`, `psi_e`, `E_h`, `psi_h` | subband energies and wavefunctions (quantum solves) |
 | `qcse_transition_eV`, `qcse_overlap` | quantum-well transition energy and overlap |
-| `J_total`, `current_conservation_error` | current density in A/cm² and its conservation check (biased solves) |
+| `J_total`, `current_conservation_error` | current density in A/cm² and its conservation check (current solves; not a number in the gate and interpolated modes) |
+| `bias_mode`, `bias_note`, `V_internal` | `'equilibrium'`, `'current'`, `'gate'`, `'interpolated'` or `'flat'`; a note when the gate has turned on; the bias the solution actually corresponds to |
+| `transport_floor_cm3` | minimum density the current equation needed, cm⁻³; 0 when it needed none |
+| `eps_r`, `E_polarization`, `D_field` | relative permittivity, polarization field −P/ε in V/m, displacement D = εF + P in C/m² |
 | `R_srh`, `R_rad`, `R_aug` | Shockley-Read-Hall, radiative and Auger recombination rates, cm⁻³ s⁻¹ |
 | `crystal`, `x_Al`, `x_In`, `x_P` | `'wurtzite'` or `'zincblende'`, and the composition profile |
 | `converged`, `n_iterations` | solver status |
@@ -482,7 +525,7 @@ The newer modules have been checked less:
 | Reciprocal space map | peak positions reproduce the coherent Al₀.₆Ga₀.₄N-on-AlN maps of Rathkanthiwar et al. (2022) to within the reading error of their figure; intensities and line shapes are not validated |
 | Bands under illumination | internally consistent (zero current, correct limits); not compared with a measurement |
 | Defects under illumination | within a factor of two to eight of three published data sets; not a validated predictor |
-| Anything under bias | not validated against experiment |
+| Anything under bias | not validated against experiment. The gate model reproduces the pinch-off voltage expected from the sheet density and barrier thickness of an AlN/GaN/AlN HEMT, and its response to gate voltage agrees with BandEng on an AlGaN/GaN HEMT (1.9 against 2.1×10¹² cm⁻² per volt). The drift-diffusion current could not be compared with nextnano++: its free edition does not solve the current equation |
 
 ## Tests
 

@@ -79,6 +79,11 @@ _LEAP_BACKOFF_MIN = 0.015   # start states at least this far behind the fold [V]
 _LEAP_N_STARTS = 3
 _RAMP_RETRY_PATTERNS = ((0.25, 1.0), (0.4, 1.0), (0.15, 0.6))
 _NOISE_UPDATE_MAX = 1e-4
+# Fallback for a carrier system cut off from the contacts (see
+# DDProblem.transport_floor): the flux floor, as a fraction of the largest
+# carrier density in the device. 1e-10 conserves the current to ~1e-3 and
+# changes nothing where the density is above the floor.
+_TRANSPORT_FLOOR_FRACTION = 1e-10
 
 
 from physics.coupled_solver import SolveCancelled  # same class the GUI worker catches
@@ -210,6 +215,16 @@ class DDProblem:
     G_opt: Optional[np.ndarray] = None
     # Recombination coefficients, scalar or per node: SRH lifetimes [s],
     # radiative B [cm^3/s], Auger C_n, C_p [cm^6/s]. None = module defaults.
+    # Minimum carrier density [cm^-3] used in the FLUX terms only (not in
+    # the charge or the recombination): 0 = the exact equations. A carrier
+    # system that is cut off from both contacts by regions where its density
+    # is below ~1e-16 of its peak (a 2D electron gas between a p-type buffer
+    # and a Schottky barrier, say) has a quasi-Fermi level that double
+    # precision cannot determine, and Newton wanders instead of converging.
+    # A floor gives those regions a small conductance, which fixes the level.
+    # It is the remedy nextnano++ applies (minimum_density_electrons/holes);
+    # here it is used only as a fallback, see solve_bias_ramp.
+    transport_floor: float = 0.0
     tau_n: object = None
     tau_p: object = None
     B_rad: object = None
@@ -320,9 +335,20 @@ class DDProblem:
         return R, dR_dn, dR_dp, dR_dlnE
 
     # ------------------------------------------------------------------
+    def _transport(self, ln_n, ln_p, dln_n, dln_p):
+        """ln of the densities the fluxes use, and their slopes: the true
+        densities, or density + transport_floor when a floor is set."""
+        if self.transport_floor <= 0.0:
+            return ln_n, ln_p, dln_n, dln_p
+        lf = np.log(self.transport_floor)
+        tn = np.logaddexp(ln_n, lf)
+        tp = np.logaddexp(ln_p, lf)
+        return tn, tp, dln_n * np.exp(ln_n - tn), dln_p * np.exp(ln_p - tp)
+
     def fluxes(self, phi, Efn, Efp):
         """Edge particle fluxes G = Jn/q, H = Jp/q [cm^-2 s^-1] (length N-1)."""
-        ln_n, ln_p, _, _ = self.carriers(phi, Efn, Efp)
+        ln_n, ln_p, dln_n, dln_p = self.carriers(phi, Efn, Efp)
+        ln_n, ln_p, _, _ = self._transport(ln_n, ln_p, dln_n, dln_p)
         kT = self.kT
         G, *_ = _sg_flux(ln_n[:-1], ln_n[1:], (Efn[1:] - Efn[:-1]) / kT, self._Cn)
         # Holes: mirror image -- density ln p, "quasi-Fermi" -Efp, and the
@@ -368,6 +394,10 @@ class DDProblem:
         # d ln E / d Efn = -1/kT, d ln E / d Efp = +1/kT
         dR_dEfn = -dR_dlnE / kT
         dR_dEfp = dR_dlnE / kT
+
+        # the fluxes see the transport densities (identical to n, p unless a
+        # floor is set); the charge and the recombination above see n, p
+        ln_n, ln_p, dln_n, dln_p = self._transport(ln_n, ln_p, dln_n, dln_p)
 
         # ---------------- electrons ----------------
         bn = (Efn[1:] - Efn[:-1]) / kT
@@ -452,6 +482,7 @@ class DDResult:
     max_update: float
     V_reached: float = 0.0
     message: str = ""
+    transport_floor: float = 0.0   # minimum flux density the solve needed [cm^-3]; 0 = exact equations
 
 
 def newton_solve(prob: DDProblem, phi, Efn, Efp, bc,
@@ -540,21 +571,59 @@ def solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
     the 5.06 V fold). Returns the first success, else the furthest-reaching
     failure.
     """
+    # First a plain ramp without the (expensive) fold leaps.
     res = _solve_bias_ramp(prob, phi_eq, V_target, phi_left, phi_right_eq, *args,
-                           log_fn=log_fn, **kwargs)
+                           log_fn=log_fn, **dict(kwargs, leap=False))
     if res.converged:
+        res.transport_floor = prob.transport_floor
         return res
     best = res
-    for dV_init, dV_max in _RAMP_RETRY_PATTERNS:
+
+    def attempt(label, **over):
+        """One more ramp; returns it if it converged, else remembers the furthest."""
+        nonlocal best
         if log_fn is not None:
-            log_fn(f"    DD ramp: retrying with coarser steps (dV_init={dV_init}, dV_max={dV_max})")
-        kw = dict(kwargs, dV_init=dV_init, dV_max=dV_max)
+            log_fn(f"    DD ramp: {label}")
         r = _solve_bias_ramp(prob, phi_eq, V_target, phi_left, phi_right_eq, *args,
-                             log_fn=log_fn, **kw)
-        if r.converged:
-            return r
-        if abs(r.V_reached) > abs(best.V_reached):
+                             log_fn=log_fn, **dict(kwargs, **over))
+        if not r.converged and abs(r.V_reached) > abs(best.V_reached):
             best = r
+        return r if r.converged else None
+
+    # 1. The exact equations stalled. Most often a carrier system is cut off
+    #    from the contacts (its quasi-Fermi level is then not determined to
+    #    double precision): give the flux a minimum density and ramp again.
+    floor = 0.0
+    if prob.transport_floor <= 0.0:
+        ln_n, ln_p, _, _ = prob.carriers(phi_eq, np.zeros(prob.N), np.zeros(prob.N))
+        floor = _TRANSPORT_FLOOR_FRACTION * float(np.exp(max(ln_n.max(), ln_p.max())))
+        prob.transport_floor = floor
+        r = attempt(f"the exact ramp stalled at V = {res.V_reached:.4f} V; solving with a minimum density "
+                    f"of {floor:.1e} cm^-3 in the current equation", leap=False)
+        if r is not None:
+            r.transport_floor = floor
+            return r
+        prob.transport_floor = 0.0
+    # 2. An I-V fold: leap over it, or cross it with coarser steps from well
+    #    behind (exact equations).
+    r = attempt("looking for an I-V fold")
+    if r is not None:
+        return r
+    for dV_init, dV_max in _RAMP_RETRY_PATTERNS:
+        r = attempt(f"retrying with coarser steps (dV_init={dV_init}, dV_max={dV_max})",
+                    dV_init=dV_init, dV_max=dV_max)
+        if r is not None:
+            return r
+    # 3. Both: coarser steps with the minimum density.
+    if floor > 0.0:
+        prob.transport_floor = floor
+        for dV_init, dV_max in _RAMP_RETRY_PATTERNS:
+            r = attempt(f"coarser steps with the minimum density (dV_init={dV_init}, dV_max={dV_max})",
+                        dV_init=dV_init, dV_max=dV_max)
+            if r is not None:
+                r.transport_floor = floor
+                return r
+        prob.transport_floor = 0.0
     return best
 
 
@@ -564,7 +633,8 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
                     dV_init: float = 0.1, dV_max: float = 0.5, dV_min: float = 1e-3,
                     tol_update: float = 1e-7,
                     log_fn: Optional[Callable[[str], None]] = None,
-                    cancel_check: Optional[Callable[[], bool]] = None) -> DDResult:
+                    cancel_check: Optional[Callable[[], bool]] = None,
+                    leap: bool = True) -> DDResult:
     """
     Adaptive bias continuation from a converged state at V_start (default:
     equilibrium, Efn = Efp = 0) to V_target. Each step is a full Newton
@@ -630,6 +700,9 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
                 # states slightly BEHIND the fold (where the Jacobian is
                 # regular) and progressively larger jumps.
                 leapt = False
+                if not leap:      # the caller has a cheaper remedy to try first
+                    return DDResult(phi, Efn, Efp, False, total_iter, res.max_update, V_reached=V,
+                                    message=f"bias ramp stalled at V = {V:.4f} V")
                 remaining = abs(V_target - V)
                 starts = [h for h in reversed(history)
                           if abs(V - h[0]) in (0.0,) or abs(V - h[0]) >= _LEAP_BACKOFF_MIN][:_LEAP_N_STARTS]

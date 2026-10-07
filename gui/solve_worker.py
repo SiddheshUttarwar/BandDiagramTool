@@ -46,6 +46,8 @@ class SolveRequest:
     V_stop: float
     n_steps: int
     recombination: Optional[dict] = None   # coefficient overrides, see AlGaNDevice
+    bias_model: str = 'auto'               # 'auto' | 'current' | 'nextnano' | 'gate'
+    insulator_bandgap: float = 1.0
 
 
 @dataclass
@@ -152,13 +154,15 @@ class SolveWorker:
             # solve_ramped's docstring for why bias-value ramping was
             # removed (it was silently converging to a masked, wrong
             # quasi-Fermi split).
-            result = device.solve_ramped(
+            result = device.solve(
                 V_applied=req.V_applied,
                 quantum=req.quantum, flat_qfl=req.flat_qfl, n_states_e=req.n_states_e,
                 n_states_h=req.n_states_h, max_iter=req.max_iter,
                 tol=req.tol, alpha=req.alpha,
                 verbose=True, log_fn=log_fn,
                 cancel_check=self._cancel_event.is_set,
+                gate_bias=(None if req.bias_model == 'auto' else req.bias_model == 'gate'),
+                interpolated_qfl=(req.insulator_bandgap if req.bias_model == 'nextnano' else None),
             )
             self._out.put(SolveDone(request_id=req.request_id, result=result))
 

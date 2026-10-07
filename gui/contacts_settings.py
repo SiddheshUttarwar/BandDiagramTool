@@ -87,6 +87,13 @@ def _optional_positive(text: str):
     return value
 
 
+def _positive(text: str) -> float:
+    value = float(text)
+    if value <= 0:
+        raise ValueError("must be positive")
+    return value
+
+
 class SettingsPanel(widgets.Section):
     def __init__(self, model: DeviceModel, parent=None):
         super().__init__("Simulation", parent)
@@ -119,6 +126,31 @@ class SettingsPanel(widgets.Section):
         psp_cb.toggled.connect(lambda v: self._set("include_spontaneous_polarization", v))
         layout.addWidget(psp_cb)
 
+        bias_combo = QtWidgets.QComboBox()
+        for label, value in (("Automatic", "auto"), ("Gate voltage (transistor)", "gate"),
+                             ("Current (drift-diffusion)", "current"),
+                             ("nextnano++ Fermi level", "nextnano")):
+            bias_combo.addItem(label, value)
+        bias_combo.setCurrentIndex(max(0, bias_combo.findData(s.bias_model)))
+        bias_combo.currentIndexChanged.connect(
+            lambda _i, c=bias_combo: self._set("bias_model", c.currentData()))
+        layout.addLayout(widgets.form_row(
+            "Bias model", bias_combo,
+            tip="How the quasi-Fermi levels are found under bias.\n"
+                "Current: the drift-diffusion equations between the two contacts. The quasi-Fermi "
+                "levels follow from current continuity; this is the physical solution.\n"
+                "nextnano++ Fermi level: one Fermi level interpolated between the contacts, as "
+                "nextnano++ does without the current equation. A drawing rule, not a solution.\n"
+                "Gate voltage: the top contact is a gate and carries no current. The channel "
+                "and everything below it stay at the source Fermi level; the level reaches the "
+                "gate's across the depleted barrier.\n"
+                "Automatic: gate voltage for a Schottky top contact on an undoped or lightly doped "
+                "layer of a structure that is not a p-n diode; current otherwise."))
+        layout.addLayout(self._row_entry(
+            "Insulator gap", "insulator_bandgap", s.insulator_bandgap, cast=_positive, unit="eV",
+            tip="For the nextnano++ Fermi level: the level drops as exp(Eg / this value). 1 eV "
+                "(nextnano++'s default) gives a nearly linear ramp across the structure; 0.05 eV "
+                "keeps it flat in the narrow-gap layers and puts the drop in the barriers."))
         flat_qfl_cb = QtWidgets.QCheckBox("Flat quasi-Fermi levels (no current)")
         flat_qfl_cb.setToolTip(
             "Hold Efn at the n-contact level and Efp at the p-contact level at every "

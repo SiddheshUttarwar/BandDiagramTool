@@ -519,6 +519,24 @@ class SolverResult:
     J_p: Optional[np.ndarray] = None
     J_total: float = float('nan')
     current_conservation_error: float = float('nan')
+    # Minimum carrier density [cm^-3] the current equation needed to
+    # converge (physics.dd_newton.DDProblem.transport_floor); 0 = none, the
+    # exact equations. Non-zero means a layer was cut off from both contacts:
+    # currents of the order of the floor's own leakage are not physical.
+    transport_floor_cm3: float = 0.0
+    # How the bias was applied: 'equilibrium', 'current' (drift-diffusion),
+    # 'gate' (no current, one Fermi level in the semiconductor),
+    # 'interpolated' (nextnano++-style Fermi level ramp, no current) or
+    # 'flat' (flat quasi-Fermi levels split by qV).
+    bias_mode: str = 'equilibrium'
+    bias_note: str = ''        # anything the user should know about how the bias was applied
+    # Relative permittivity profile, the polarization field -P/(eps0 eps_r)
+    # [V/m] (the field the polarization alone would set up in a slab with no
+    # free charge) and the electric displacement D = eps0 eps_r F + P [C/m^2],
+    # whose slope is the free charge density.
+    eps_r: Optional[np.ndarray] = None
+    E_polarization: Optional[np.ndarray] = None
+    D_field: Optional[np.ndarray] = None
 
     # Wavefunctions (quantum mode)
     E_e: Optional[np.ndarray] = None
@@ -897,6 +915,21 @@ def _solve_bias_with_series_resistance(
 _equilibrium_phi_cache: dict = {}
 
 
+# Largest gate-voltage step taken in one Poisson solve (see the gate ramp in
+# solve_self_consistent).
+_GATE_RAMP_STEP_V = 0.5
+# A node belongs to the channel (rather than the depleted barrier above it)
+# when its mobile carrier density exceeds this fraction of the device's peak.
+_GATE_CHANNEL_FRACTION = 1e-3
+# A Schottky top contact counts as a gate only on a layer doped below this [cm^-3].
+_GATE_MAX_SURFACE_DOPING = 1e18
+# ... and only when the stack is not a p-n diode: no n-type and p-type
+# layers both doped above this [cm^-3].
+_GATE_PN_DOPING = 1e16
+# A gate is taken to have turned on this far below its barrier height.
+_GATE_TURN_ON_MARGIN_V = 0.1
+
+
 def _get_equilibrium_phi_init(
     grid: GridData, quantum: bool, n_states_e: int, n_states_h: int,
     log_fn: Optional[Callable[[str], None]], cancel_check: Optional[Callable[[], bool]],
@@ -964,10 +997,40 @@ def solve_self_consistent(
     Efp_init: Optional[np.ndarray] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
     flat_qfl: bool = False,
+    gate_bias: Optional[bool] = None,
+    interpolated_qfl: Optional[float] = None,
 ) -> SolverResult:
     """
     Run the self-consistent Schrödinger-Poisson solver.
 
+    gate_bias : treat the biased (top) contact as a GATE: no current flows,
+               the whole semiconductor keeps the Fermi level of the bottom
+               contact (Efn = Efp = 0) and only the gate's own level moves,
+               to -V_applied. This is the usual one-dimensional picture of a
+               HEMT or a MOS-like stack under gate voltage: in the real device
+               the channel is held by the source and drain, not by a vertical
+               current through the buffer. The semiconductor is therefore in
+               equilibrium with the source: E_F = 0 from the bottom up to the
+               uppermost layer that holds carriers (the channel), and across
+               the depleted barrier above it the level goes linearly to the
+               gate's value; no carriers are there, so that stretch carries
+               no charge. None (default) = automatic: on when the top contact
+               is a Schottky contact on a layer doped below 1e18 cm^-3 and
+               the stack is not a p-n diode; off otherwise. False = solve the
+               vertical drift-diffusion current through the Schottky contact.
+    interpolated_qfl : nextnano++-style Fermi level under bias, without the
+               current equation. Give the "insulator band gap" E_ib in eV
+               (nextnano++'s default is 1.0). One Fermi level E_F = Efn = Efp
+               is interpolated between the two contact values by solving
+                   d/dz [ exp(-Eg(z) / E_ib) dE_F/dz ] = 0,
+               E_F = 0 at the bottom, -V_applied at the top, and Poisson (and
+               Schrodinger) are solved with it. With E_ib = 1 eV the level
+               ramps almost linearly across the whole structure, a little
+               steeper in the wider-gap layers; a small E_ib (0.05 eV) keeps
+               it flat in the narrow-gap layers and puts the whole drop in
+               the barriers. It is what nextnano++ shows for a Poisson-only
+               bias sweep (currents{ insulator_bandgap }). It is a
+               prescription, not a transport result. None (default) = off.
     flat_qfl : constant-quasi-Fermi-level bias mode (no current solved,
                nextnano-style). Efn is held at the n-contact value (0) and
                Efp at the p-contact value (-V_applied) at every interior
@@ -1070,7 +1133,65 @@ def solve_self_consistent(
     # adaptive-alpha damping + Anderson mixing, and biased solves use the
     # fully-coupled Newton solve in physics.coupled_solver. Neither has a
     # user-tunable step-size knob any more.
+    if gate_bias is None:
+        # A Schottky top contact is a gate. A transistor's channel is held at
+        # the source potential by its lateral contacts, which a 1D stack does
+        # not contain; a vertical current solve would instead let a channel
+        # that is cut off from the bottom contact (AlN/GaN/AlN) drift up to
+        # the gate's level, with no depletion at all.
+        # A Schottky contact on a heavily doped layer is a (poor) contact of
+        # a diode, not a gate: an LED with a Schottky p-contact still carries
+        # a vertical current.
+        # Nor is it a gate when the stack is a p-n diode (both doping types
+        # present): that is an LED or a diode with a Schottky contact.
+        net = np.asarray(grid.ND, dtype=float) - np.asarray(grid.NA, dtype=float)
+        is_pn_diode = net.max() >= _GATE_PN_DOPING and (-net).max() >= _GATE_PN_DOPING
+        gate_bias = (grid.top_contact.contact_type == 'schottky'
+                     and max(float(grid.ND[-1]), float(grid.NA[-1])) < _GATE_MAX_SURFACE_DOPING
+                     and not is_pn_diode
+                     and interpolated_qfl is None and not flat_qfl)
+    gate_bias = bool(gate_bias) and V_applied != 0.0
+    interpolate = interpolated_qfl is not None and V_applied != 0.0 and not gate_bias
+    if interpolate and interpolated_qfl <= 0.0:
+        raise ValueError("interpolated_qfl (the insulator band gap) must be positive, in eV.")
+    if gate_bias or interpolate:
+        flat_qfl = True            # same Poisson(+Schrodinger) loop, see the QFL set-up below
     bias_coupled = (V_applied != 0.0) and not flat_qfl
+
+    if gate_bias and grid.top_contact.contact_type == 'schottky':
+        # A gate forward-biased beyond its own barrier height is a diode that
+        # has turned on: it conducts, and no current-free band diagram exists
+        # for the excess voltage (it drops across series resistance). The
+        # structure is solved at the turn-on limit and the result says so.
+        barrier_eV = float(grid.Ec0[-1] - grid.phi_top_eq)          # Ec - E_F at the gate, at equilibrium
+        V_on = barrier_eV - _GATE_TURN_ON_MARGIN_V
+        if V_applied > V_on > 0.0:
+            res = solve_self_consistent(
+                grid, V_applied=V_on, R_series=0.0, quantum=quantum, n_states_e=n_states_e,
+                n_states_h=n_states_h, max_iter=max_iter, tol=tol, alpha=alpha, verbose=verbose,
+                log_fn=log_fn, cancel_check=cancel_check, gate_bias=True)
+            note = (f"The gate is forward-biased beyond its barrier ({barrier_eV:.2f} eV): it conducts. "
+                    f"Shown at the turn-on limit, {V_on:.2f} V.")
+            if verbose:
+                (log_fn if log_fn is not None else print)("  " + note)
+            return _dc_replace(res, V_applied=V_applied, V_internal=V_on, bias_note=note)
+
+    if (gate_bias or interpolate) and phi_init is None and abs(V_applied) > _GATE_RAMP_STEP_V:
+        # Walk the gate voltage up in steps, each classical solve starting
+        # from the previous potential: a single jump to several volts leaves
+        # the damped Poisson loop hundreds of iterations from its answer.
+        n_steps = int(np.ceil(abs(V_applied) / _GATE_RAMP_STEP_V))
+        for V_step in np.linspace(0.0, V_applied, n_steps + 1)[1:-1]:
+            if cancel_check is not None and cancel_check():
+                raise SolveCancelled("Solve cancelled by user")
+            step = solve_self_consistent(
+                grid, V_applied=float(V_step), R_series=0.0, quantum=False, max_iter=max_iter, tol=tol,
+                verbose=False, log_fn=log_fn, cancel_check=cancel_check, gate_bias=gate_bias,
+                interpolated_qfl=interpolated_qfl, phi_init=phi_init)
+            phi_init = step.phi
+        if verbose and phi_init is not None:
+            (log_fn if log_fn is not None else print)(
+                f"  Gate bias: ramped to {V_applied:+.3f} V in {n_steps} steps")
 
     if bias_coupled and R_series > 0.0:
         return _solve_bias_with_series_resistance(
@@ -1218,11 +1339,51 @@ def solve_self_consistent(
         # forward bias on a p-down device (the DD solve gives +qV there).
         n_at_bottom = (g.ND[0] - g.NA[0]) >= (g.ND[-1] - g.NA[-1])
         Ef_n_contact, Ef_p_contact = (0.0, -V_applied) if n_at_bottom else (-V_applied, 0.0)
+        if gate_bias:
+            # Gate voltage: one Fermi level, that of the source (= the bottom
+            # contact's, 0), for both carriers throughout the semiconductor.
+            Ef_n_contact = Ef_p_contact = 0.0
         Efn = np.full(g.N, Ef_n_contact)
         Efp = np.full(g.N, Ef_p_contact)
+        if interpolate:
+            # d/dz [ w dE_F/dz ] = 0 with w = exp(-Eg / E_ib): E_F is the
+            # running integral of 1/w, scaled to go from 0 to -V_applied.
+            inv_w = np.exp((np.asarray(g.Eg) - float(np.min(g.Eg))) / float(interpolated_qfl))
+            steps = 0.5 * (inv_w[1:] + inv_w[:-1]) * np.asarray(g.dx)
+            ramp = np.concatenate([[0.0], np.cumsum(steps)])
+            Efn = -V_applied * ramp / ramp[-1]
+            Efp = Efn.copy()
+        phi_eq_ref = (_get_equilibrium_phi_init(grid, False, n_states_e, n_states_h, log_fn, cancel_check)
+                      if gate_bias else None)
+        if gate_bias and phi_eq_ref is not None:
+            # Between the channel and the gate metal there are no carriers
+            # and the level has to get from 0 to -V: a straight line across
+            # that depleted barrier. The channel edge is the uppermost node
+            # holding, AT EQUILIBRIUM, a mobile density above
+            # _GATE_CHANNEL_FRACTION of the peak. (Not in the biased state:
+            # with the level held at 0 up to the surface, a strongly negative
+            # gate lifts the barrier's valence band above it and a spurious
+            # surface hole layer forms, which would then count as "channel".)
+            n_ref = electron_density(g.Ec0 - phi_eq_ref, 0.0, g.Nc, T)
+            p_ref = hole_density(g.Ev0 - phi_eq_ref, 0.0, g.Nv, T)
+            mobile = np.maximum(n_ref, p_ref)
+            holds = np.where(mobile >= _GATE_CHANNEL_FRACTION * float(mobile.max()))[0]
+            i_c = int(holds[-1]) if len(holds) else 0
+            if i_c < g.N - 1:
+                z = np.asarray(g.x_nm, dtype=float)
+                ramp = -V_applied * (z[i_c:] - z[i_c]) / (z[-1] - z[i_c])
+                Efn[i_c:] = ramp
+                Efp[i_c:] = ramp
         Efn[0] = Efp[0] = 0.0
         Efn[-1] = Efp[-1] = -V_applied
         if verbose:
+            if interpolate:
+                _log(f"  Interpolated Fermi level (nextnano++ style, insulator band gap "
+                     f"{interpolated_qfl:g} eV): Efn = Efp, no current.")
+            if gate_bias:
+                _log(f"  Gate bias: the top contact is a Schottky gate at {V_applied:+.4f} V. No current; "
+                     f"the channel and everything below it keep the source Fermi level (0), and the "
+                     f"level goes to the gate's across the depleted barrier.")
             _log(f"  Flat quasi-Fermi levels ({'n' if n_at_bottom else 'p'}-side at bottom): "
                  f"Efn = {Ef_n_contact:.4f}, Efp = {Ef_p_contact:.4f} eV at all interior "
                  f"nodes (split = {Ef_n_contact - Ef_p_contact:.4f} eV), Poisson-only, no current.")
@@ -1375,6 +1536,7 @@ def solve_self_consistent(
     have_dd_state = warm_started
     phi_eq_dd = None
     dd_prob = None
+    dd_floor = 0.0      # transport floor a previous drift-diffusion solve of this run needed
 
     for iteration in range(max_iter):
         if cancel_check is not None and cancel_check():
@@ -1483,6 +1645,7 @@ def solve_self_consistent(
             dd_prob = _dd_problem(g, Ed_x, Ea_x, surf_idx, surf_density_cm3,
                                   surf_energy_eV, surf_is_donor,
                                   quantum_gamma_n, quantum_gamma_p)
+            dd_prob.transport_floor = dd_floor
             dd_log = (_log if verbose else None)
             cd_result = None
             if have_dd_state:
@@ -1501,6 +1664,7 @@ def solve_self_consistent(
                     dd_prob, phi_eq_dd, V_internal, phi_left, g.phi_top_eq,
                     log_fn=dd_log, cancel_check=cancel_check)
             have_dd_state = have_dd_state or cd_result.converged
+            dd_floor = max(dd_floor, dd_prob.transport_floor)
             phi_candidate = cd_result.phi
             Efn = cd_result.Efn
             Efp = cd_result.Efp
@@ -1876,6 +2040,10 @@ def solve_self_consistent(
     if bias_coupled and dd_prob is not None:
         J_n_edges, J_p_edges, J_t_edges, current_err = dd_newton.current_profile(dd_prob, phi, Efn, Efp)
         J_total = float(np.mean(J_t_edges))
+        if dd_floor > 0.0 and verbose:
+            _log(f"  NOTE: a layer is cut off from both contacts, so its quasi-Fermi level was fixed with a "
+                 f"minimum density of {dd_floor:.1e} cm^-3 in the current equation. The band diagram and "
+                 f"densities are reliable; a current this small is the leakage of that floor, not a prediction.")
         if verbose:
             _log(f"  Current density J = {J_total:.4e} A/cm^2, conservation error "
                  f"(max-min)/max|J| = {current_err:.2e}")
@@ -1896,6 +2064,12 @@ def solve_self_consistent(
         x_In=(np.asarray(g.x_In).copy() if getattr(g, 'x_In', None) is not None
               else np.zeros_like(np.asarray(g.x_Al))),
         crystal=getattr(g, 'crystal', 'wurtzite'),
+        transport_floor_cm3=float(dd_floor),
+        bias_mode=('equilibrium' if V_applied == 0.0 else 'gate' if gate_bias
+                   else 'interpolated' if interpolate else 'flat' if flat_qfl else 'current'),
+        eps_r=np.asarray(g.eps_r).copy(),
+        E_polarization=-np.asarray(g.P_total) / (eps0 * np.asarray(g.eps_r)),
+        D_field=eps0 * np.asarray(g.eps_r) * np.asarray(E_field) + np.asarray(g.P_total),
         x_P=(np.asarray(g.x_P).copy() if getattr(g, 'x_P', None) is not None
              else np.zeros_like(np.asarray(g.x_Al))),
         E_h_lh=E_h_lh, psi_h_lh=psi_h_lh, E_h_so=E_h_so, psi_h_so=psi_h_so,

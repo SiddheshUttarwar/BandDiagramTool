@@ -126,7 +126,7 @@ _Y_FIELDS = {
     "Band Diagram": ["Ec", "Ev", "Ev_hh", "Ev_lh", "Ev_so", "Ei", "Efn", "Efp"],
     "Wavefunctions": ["Ec", "Ev", "Ei", "Efn", "Efp"],
     "Carriers": ["n", "p"],
-    "Fields": ["E_field"],
+    "Fields": ["E_field", "E_polarization"],
     "Polarization": ["Psp", "Ppz", "P_total"],
     "Strain": ["eps_xx", "eps_zz"],
 }
@@ -494,12 +494,35 @@ class PlotPanel(QtWidgets.QWidget):
         if abs(v_int - r.V_applied) > 0.01:
             bias += f"   (internal {v_int:.4f} V)"
         put("Applied bias", bias)
+        mode = getattr(r, "bias_mode", "")
+        if getattr(r, "bias_note", ""):
+            lines.append("      " + r.bias_note)
+        if mode == "gate":
+            put("Bias mode", "gate voltage (Schottky top contact): no current")
+            lines.append("      The channel is held at the source Fermi level (0); the level reaches the gate's "
+                         "across the depleted barrier.")
+        elif mode == "interpolated":
+            put("Bias mode", "nextnano++ Fermi level (interpolated between the contacts): no current")
+        elif mode == "flat":
+            put("Bias mode", "flat quasi-Fermi levels: no current")
+        elif mode == "current":
+            put("Bias mode", "drift-diffusion current between the two contacts")
         put("Temperature", f"{r.T:.1f} K")
         j = getattr(r, "J_total", None)
         if j is not None and np.isfinite(j) and abs(r.V_applied) > 1e-9:
             err = getattr(r, "current_conservation_error", float("nan"))
-            put("Current density", f"{float(j):.4e} A/cm^2" + (f"   (conservation error {err:.1e})"
-                                                                if np.isfinite(err) else ""))
+            if np.isfinite(err) and err > 1e-2:
+                # a current this small is lost in the arithmetic: say so
+                # rather than print a number that is not conserved
+                put("Current density", f"below the numerical resolution (|J| ~ {abs(float(j)):.0e} A/cm^2)")
+            else:
+                put("Current density", f"{float(j):.4e} A/cm^2" + (f"   (conservation error {err:.1e})"
+                                                                    if np.isfinite(err) else ""))
+            floor = getattr(r, "transport_floor_cm3", 0.0)
+            if floor > 0:
+                put("Current equation", f"minimum density {floor:.1e} cm^-3")
+                lines.append("      A layer is cut off from both contacts. Bands and densities are reliable;")
+                lines.append("      a current this small is the leakage of that minimum density, not a prediction.")
         ns = float(_trapz(np.asarray(r.n, dtype=float), x_cm))
         ps = float(_trapz(np.asarray(r.p, dtype=float), x_cm))
         put("Electron sheet density", (f"{ns:.4e}" if ns >= 1 else "0") + " cm^-2   (integrated over the device)")
@@ -510,7 +533,8 @@ class PlotPanel(QtWidgets.QWidget):
             put("Peak field", f"{f[k]:.3f} MV/cm at z = {float(r.x_nm[k]):.2f} nm")
 
         rec = recombination_currents(r)
-        if rec is not None and abs(r.V_applied) > 1e-9:
+        # a unipolar device has rates of order 1e-30: numerical zeros, not worth a block
+        if rec is not None and abs(r.V_applied) > 1e-9 and abs(rec["total"]) > 1e-15:
             lines.append("")
             lines.append("RECOMBINATION   integrated over the device, as current density")
             total = rec["total"]
@@ -864,7 +888,11 @@ class PlotPanel(QtWidgets.QWidget):
                 ax.get_legend().remove()
             elif legend and ax.get_legend() is not None:
                 handles, labels = ax.get_legend_handles_labels()
-                ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.015, 1.0),
+                # a second y-axis on the right (the field figure's D axis)
+                # needs the legend moved clear of its tick labels
+                twin = any(o is not ax and o.get_label() != "<colorbar>"
+                           and o.get_position().bounds == ax.get_position().bounds for o in fig.axes)
+                ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.17 if twin else 1.015, 1.0),
                           borderaxespad=0.0, frameon=False, fontsize=9, handlelength=3.2,
                           labelcolor=theme.TEXT_MUTED, labelspacing=0.55)
 
@@ -917,11 +945,17 @@ class PlotPanel(QtWidgets.QWidget):
         if not np.any(mask):
             return None
         chunks = []
+        shown_qfl = dict(zip(("Efn", "Efp"), _plotter.quasi_fermi_levels_where_defined(result)))
         for f in fields:
-            arr = getattr(result, f, None)
+            # a quasi-Fermi level counts only where it is drawn (see
+            # visualization.plotter.quasi_fermi_levels_where_defined)
+            arr = shown_qfl.get(f, getattr(result, f, None))
             if arr is None:
                 continue
-            arr = np.asarray(arr)[mask]
+            arr = np.asarray(arr, dtype=float)[mask]
+            arr = arr[np.isfinite(arr)]
+            if arr.size == 0:
+                continue
             if log_floor is not None:
                 arr = np.maximum(arr, log_floor)
             chunks.append(arr)

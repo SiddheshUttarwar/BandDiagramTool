@@ -48,6 +48,7 @@ _FIELDS = [
     "Psp_C_per_m2", "Ppz_C_per_m2", "P_total_C_per_m2",
     "eps_xx", "eps_zz",
     "x_P", "R_srh_cm-3_s-1", "R_rad_cm-3_s-1", "R_aug_cm-3_s-1",
+    "eps_r", "E_polarization_V_per_m", "D_C_per_m2",
 ]
 
 
@@ -72,6 +73,9 @@ def save_result_csv(result: SolverResult, path: str) -> None:
     rates = [getattr(result, k, None) for k in ('R_srh', 'R_rad', 'R_aug')]
     rates = [zeros if v is None else np.asarray(v, dtype=float) for v in rates]
 
+    extra = [getattr(result, k, None) for k in ('eps_r', 'E_polarization', 'D_field')]
+    extra = [zeros if v is None else np.asarray(v, dtype=float) for v in extra]
+
     with open(path, "w", newline="", encoding="utf-8") as f:
         f.write(f"# crystal,{getattr(result, 'crystal', 'wurtzite')}\n")
         f.write(f"# V_applied_V,{result.V_applied}\n")
@@ -94,6 +98,7 @@ def save_result_csv(result: SolverResult, path: str) -> None:
                 repr(float(result.eps_xx[i])), repr(float(result.eps_zz[i])),
                 repr(float(x_P[i])), repr(float(rates[0][i])), repr(float(rates[1][i])),
                 repr(float(rates[2][i])),
+                repr(float(extra[0][i])), repr(float(extra[1][i])), repr(float(extra[2][i])),
             ])
 
 
@@ -136,6 +141,8 @@ def load_result_csv(path: str) -> dict:
         **({"x_P": arr[col["x_P"]], "R_srh": arr[col["R_srh_cm-3_s-1"]],
             "R_rad": arr[col["R_rad_cm-3_s-1"]], "R_aug": arr[col["R_aug_cm-3_s-1"]]}
            if "x_P" in col else {}),
+        **({"eps_r": arr[col["eps_r"]], "E_polarization": arr[col["E_polarization_V_per_m"]],
+            "D_field": arr[col["D_C_per_m2"]]} if "D_C_per_m2" in col else {}),
     }
 
 

@@ -26,6 +26,22 @@ class SolveSettings:
     # Constant quasi-Fermi levels under bias (Efn - Efp = qV at every
     # interior node, no current) -- see solve_self_consistent(flat_qfl=).
     flat_qfl: bool = False
+    # How a bias is applied: 'auto' | 'current' | 'nextnano' | 'gate'.
+    #   current  - the drift-diffusion equations between the two contacts:
+    #              the quasi-Fermi levels follow from current continuity
+    #              (the physical solution, and the default)
+    #   nextnano - one Fermi level interpolated between the contacts the way
+    #              nextnano++ does without the current equation (a drawing
+    #              rule, for comparing with nextnano++ Poisson-only runs)
+    #   gate     - one flat Fermi level; only the top contact moves
+    bias_model: str = 'auto'
+    insulator_bandgap: float = 1.0     # eV, for 'nextnano' (nextnano++'s default)
+
+    def resolved_bias_model(self, top_contact_type: str) -> str:
+        # 'auto' is passed on as it is: the solver decides (a Schottky top
+        # contact on a lightly doped layer is a gate, anything else carries a
+        # vertical current)
+        return self.bias_model
     include_spontaneous_polarization: bool = True
     polarity: str = 'metal'                       # 'metal' | 'N' (growth along [000-1])
     polarization_model: str = 'ambacher2002'      # 'ambacher2002' | 'dreyer2016'

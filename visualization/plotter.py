@@ -173,6 +173,30 @@ def _mott_background(ax, r: SolverResult) -> None:
 # Individual panels
 # ---------------------------------------------------------------------------
 
+# A quasi-Fermi level describes the occupation of a band by its carriers.
+# Where there are essentially none of them (fewer than this per cm^3) it
+# describes nothing: the drift-diffusion equations leave it undetermined to
+# within the arithmetic, and the solver's own convergence test ignores it
+# there (physics.dd_newton.newton_solve).
+QFL_MIN_DENSITY_CM3 = 1.0
+
+
+def quasi_fermi_levels_where_defined(r: SolverResult):
+    """(Efn, Efp) for drawing: under bias, each level only where its carrier
+    density is at least QFL_MIN_DENSITY_CM3 (NaN elsewhere, which matplotlib
+    leaves blank). So the electron level is drawn through the n side and as
+    far into the p side as electrons are injected, not as a line plunging to
+    the contact value across a region with no electrons; a device with no
+    holes shows no hole level. At equilibrium the two coincide with the
+    Fermi level, which is defined everywhere, and nothing is hidden."""
+    Efn = np.asarray(r.Efn, dtype=float)
+    Efp = np.asarray(r.Efp, dtype=float)
+    if abs(getattr(r, 'V_applied', 0.0)) < 1e-12 or np.allclose(Efn, Efp, atol=1e-9):
+        return Efn, Efp
+    return (np.where(np.asarray(r.n) >= QFL_MIN_DENSITY_CM3, Efn, np.nan),
+            np.where(np.asarray(r.p) >= QFL_MIN_DENSITY_CM3, Efp, np.nan))
+
+
 def plot_band_diagram(
     r: SolverResult,
     ax: Optional[plt.Axes] = None,
@@ -237,8 +261,9 @@ def plot_band_diagram(
 
     # Quasi-Fermi levels (now arrays)
     # They might contain NaNs in some highly depleted regions, or just be plotted directly
-    ax.plot(x, r.Efn, color=_COLORS['Efn'], lw=1.5, ls='--', label='$E_{fc}$')
-    ax.plot(x, r.Efp, color=_COLORS['Efp'], lw=1.5, ls='--', label='$E_{fv}$')
+    Efn_shown, Efp_shown = quasi_fermi_levels_where_defined(r)
+    ax.plot(x, Efn_shown, color=_COLORS['Efn'], lw=1.5, ls='--', label='$E_{fc}$')
+    ax.plot(x, Efp_shown, color=_COLORS['Efp'], lw=1.5, ls='--', label='$E_{fv}$')
 
     if show_vacuum:
         ax.plot(x, E_vac, color=_COLORS['vac'], lw=1.0, ls='-.',
@@ -459,8 +484,11 @@ def plot_fields(
     ax: Optional[plt.Axes] = None,
     units: str = 'MV/cm',
 ) -> plt.Axes:
-    """Panel 4: the electric field. The quasi-electric field of a composition
-    gradient is drawn alongside for reference only; it is not added to the field."""
+    """Panel 4: the electric field F, the polarization field -P/eps, and on
+    the right-hand axis the electric displacement D = eps F + P, whose slope
+    is the free charge density (D is flat wherever there is no free charge).
+    The quasi-electric field of a composition gradient is drawn alongside
+    for reference only; it is not added to the field."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(9, 4))
 
@@ -475,8 +503,27 @@ def plot_fields(
     F_elec  = r.E_field * scale
     F_quasi = r.F_quasi * scale
 
-    ax.plot(x, F_elec,  color=_COLORS['Felec'],  lw=1.8, label='$F$')
+    ax.plot(x, F_elec,  color=_COLORS['Felec'],  lw=1.8, label='Electric field $F$')
+    F_pol = getattr(r, 'E_polarization', None)
+    if F_pol is not None:
+        F_pol = np.asarray(F_pol) * scale
+        ax.plot(x, F_pol, color=_COLORS['Ptot'], lw=1.5, label='Polarization field $-P/\\varepsilon$')
     ax.plot(x, F_quasi, color=_COLORS['Fquasi'], lw=1.5, ls='--', label='$F_{quasi}$ (reference only)')
+    D = getattr(r, 'D_field', None)
+    ax_d = None
+    if D is not None:
+        D = np.asarray(D)
+        ax_d = ax.twinx()
+        d_color = _COLORS['Ei']
+        ax_d.plot(x, D, color=d_color, lw=1.5, ls='-.')
+        ax_d.set_ylabel('Displacement $D$ (C/m$^2$)', fontsize=11, color=d_color)
+        ax_d.tick_params(axis='y', colors=d_color)
+        d_lo, d_hi = float(np.min(D)), float(np.max(D))
+        d_pad = 0.08 * (d_hi - d_lo) if d_hi > d_lo else max(abs(d_hi), 1e-6) * 0.5
+        ax_d.set_ylim(d_lo - d_pad, d_hi + d_pad)
+        # an entry for D in the legend of the main axis
+        ax.plot([], [], color=d_color, lw=1.5, ls='-.',
+                label='Displacement $D = \\varepsilon F + P$ (right axis)')
 
     ax.axhline(0, color='black', lw=0.5, ls=':')
 
@@ -489,10 +536,16 @@ def plot_fields(
     lo, hi = float(np.min(F_elec)), float(np.max(F_elec))
     q_lo, q_hi = np.percentile(F_quasi, [2, 98])
     lo, hi = min(lo, float(q_lo)), max(hi, float(q_hi))
+    if F_pol is not None:
+        lo, hi = min(lo, float(np.min(F_pol))), max(hi, float(np.max(F_pol)))
     pad = 0.08 * (hi - lo) if hi > lo else 0.5
     ax.set_ylim(lo - pad, hi + pad)
     _legend_right(ax, fontsize=9)
-    ax.set_title('Electric Field', fontsize=10)
+    if ax_d is not None and ax.get_legend() is not None:
+        # clear of the right-hand axis and its tick labels
+        ax.get_legend().set_bbox_to_anchor((1.16, 1.0), transform=ax.transAxes)
+        ax.get_figure().tight_layout()
+    ax.set_title('Electric Field, Polarization Field and Displacement', fontsize=10)
     ax.grid(True, alpha=0.3, lw=0.5)
     return ax
 

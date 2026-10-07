@@ -146,3 +146,38 @@ def test_quantum_well_and_reciprocal_space_map():
     assert not rsm.symmetric
     assert {name for name, _, _ in rsm.relaxed_points} == {'InP', 'In0.53Ga0.47As'}
     assert rsm.qx_substrate == pytest.approx(2.0 * np.pi * np.sqrt(8.0) / 5.8697, rel=1e-4)
+
+
+def test_no_recombination_at_equilibrium():
+    """Detailed balance: with coinciding quasi-Fermi levels the three rates
+    are exactly zero, also for degenerate and quantum-mechanical densities
+    (where n p differs from Nc Nv exp(-Eg/kT))."""
+    well = Device(layers=[AbruptLayer(0.0, 40, material='InGaP', x_In=1.0, n_doping=2e18),
+                          AbruptLayer(0.0, 8, material='InGaAs', x_In=0.53),
+                          AbruptLayer(0.0, 40, material='InGaP', x_In=1.0, n_doping=2e18)],
+                  contacts=OHMIC, dx_nm=0.25)
+    for quantum in (False, True):
+        r = well.solve(quantum=quantum)
+        assert r.converged
+        for rate in (r.R_srh, r.R_rad, r.R_aug):
+            assert not np.any(rate)
+    # the same form, away from equilibrium, is the textbook n p - ni^2
+    n, p, kT = np.array([3e16]), np.array([2e15]), 0.025852
+    ni = np.array([2e6])
+    split = kT * np.log(n * p / ni ** 2)
+    a = compute_recombination_components(n, p, ni)
+    b = compute_recombination_components(n, p, None, split_eV=split, kT_eV=kT)
+    assert b.R_srh[0] == pytest.approx(a.R_srh[0], rel=1e-9)
+    assert b.R_rad[0] == pytest.approx(a.R_rad[0], rel=1e-9)
+    assert b.R_aug[0] == pytest.approx(a.R_aug[0], rel=1e-9)
+    # reverse bias: net generation
+    c = compute_recombination_components(n, p, None, split_eV=np.array([-0.2]), kT_eV=kT)
+    assert c.R_srh[0] < 0 and c.R_rad[0] < 0
+
+
+def test_flat_quasi_fermi_levels_report_no_rates():
+    device = Device(layers=[AbruptLayer(0.0, 100, material='AlGaAs', n_doping=1e17),
+                            AbruptLayer(0.0, 100, material='AlGaAs', p_doping=1e17)], contacts=OHMIC, dx_nm=2.0)
+    r = device.solve(V_applied=0.5, quantum=False, flat_qfl=True)
+    assert r.R_srh is None and r.R_rad is None and r.R_aug is None
+    assert device.solve(V_applied=0.5, quantum=False).R_srh is not None

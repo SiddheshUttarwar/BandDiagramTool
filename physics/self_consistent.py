@@ -1839,6 +1839,7 @@ def solve_self_consistent(
     # --- Recombination rates [cm^-3 s^-1], one value per grid point ---
     ni_final = np.sqrt(g.Nc * g.Nv) * np.exp(-(Ec_final - Ev_final) / (2.0 * kBT_eV))
     rec = compute_recombination_components(n_final, p_final, ni_final,
+                                           split_eV=np.asarray(Efn) - np.asarray(Efp), kT_eV=kBT_eV,
                                            **recombination_coefficients(g))
 
     # --- Optical gain spectrum (quantum mode, only if a design quantum
@@ -1904,7 +1905,12 @@ def solve_self_consistent(
         qcse_dominant_transition_eV=qcse_dominant_transition_eV,
         qcse_dominant_overlap=qcse_dominant_overlap,
         qcse_dominant_pair=qcse_dominant_pair,
-        R_srh=rec.R_srh, R_rad=rec.R_rad, R_aug=rec.R_aug,
+        # With flat quasi-Fermi levels under bias no current equation is
+        # solved, so the splitting is imposed rather than computed and the
+        # rates it would imply mean nothing: they are not reported.
+        R_srh=None if (flat_qfl and V_applied != 0.0) else rec.R_srh,
+        R_rad=None if (flat_qfl and V_applied != 0.0) else rec.R_rad,
+        R_aug=None if (flat_qfl and V_applied != 0.0) else rec.R_aug,
         gain_energy_eV=gain_energy_eV, gain_wavelength_nm=gain_wavelength_nm,
         gain_spectrum_cm1=gain_spectrum_cm1, peak_gain_cm1=peak_gain_cm1,
         peak_gain_wavelength_nm=peak_gain_wavelength_nm,

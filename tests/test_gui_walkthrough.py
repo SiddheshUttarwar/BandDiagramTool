@@ -105,7 +105,9 @@ def walkthrough(verbose: bool = False) -> list:
             if "Could not render" in text:
                 bad(f"{label}: figure {name!r} failed: {text[:300]}")
             fig = w.plot_panel._tabs[name][0]
-            if expect_data and name not in ("RSM", "LB", "QCSE", "Wavefunctions") and not any(
+            # Recombination shows a note instead of curves at equilibrium and in the
+            # flat-quasi-Fermi-level mode; its curves are checked under bias below
+            if expect_data and name not in ("RSM", "LB", "QCSE", "Wavefunctions", "Recombination") and not any(
                     ax.lines or ax.collections or ax.images for ax in fig.axes):
                 bad(f"{label}: figure {name!r} is empty")
         w.plot_panel.show_tab("Band Diagram")
@@ -136,6 +138,8 @@ def walkthrough(verbose: bool = False) -> list:
         result = w.plot_panel.results[0]
         if not w.plot_panel.summary_widget.toPlainText().startswith("SOLUTION"):
             bad("summary pane is empty")
+        if abs(result.V_applied) < 1e-12 and (result.R_srh.any() or result.R_rad.any() or result.R_aug.any()):
+            bad("non-zero recombination at equilibrium")
         check_figures(tpl.key)
 
         # every region of the Region dropdown, on every position figure
@@ -419,6 +423,11 @@ def walkthrough(verbose: bool = False) -> list:
         bad(f"solve used T = {r.T}, V = {r.V_applied}")
     if "RECOMBINATION" not in w.plot_panel.summary_widget.toPlainText():
         bad("no recombination block in the summary of a biased solve")
+    w.plot_panel.show_tab("Recombination")
+    pump(0.1)
+    rec_ax = w.plot_panel._tabs["Recombination"][0].axes[0]
+    if len(rec_ax.lines) < 4 or "equilibrium" in figure_text("Recombination"):
+        bad("the Recombination figure has no curves under bias")
     j_fast = abs(r.J_total)
     for attr in ("tau_n_ns", "tau_p_ns", "B_rad", "C_auger"):
         edit = st._field_vars[attr][0]

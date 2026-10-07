@@ -288,21 +288,36 @@ class DDProblem:
                     np.add.at(dNa, idx, dens * 4.0 * e / (1.0 + 4.0 * e) ** 2 / kT)
         return Ndp, Nam, dNd, dNa
 
-    def _recombination(self, n, p):
-        ni2 = self._ni2
-        ni = np.sqrt(ni2)
+    def _recombination(self, n, p, Efn, Efp):
+        """Net recombination R and its partial derivatives with respect to
+        n, p and ln E, where E = exp(-(Efn - Efp)/kT).
+
+        The driving term is written n p - ni_eff^2 with ni_eff^2 = n p E,
+        i.e. n p (1 - exp(-(Efn - Efp)/kT)). For Boltzmann statistics this is
+        the usual n p - ni^2. Unlike that form it also vanishes exactly
+        wherever the quasi-Fermi levels coincide when the densities are
+        degenerate (Fermi-Dirac) or quantum-corrected, as detailed balance
+        requires."""
+        a = np.clip((Efn - Efp) / self.kT, -600.0, 600.0)
+        E = np.exp(-a)
         np_ = n * p
-        excess = np_ - ni2
+        ni2 = np_ * E
+        ni = np.sqrt(ni2)
+        excess = np_ * (-np.expm1(-a))
         den = self.tau_p * (n + ni) + self.tau_n * (p + ni)
         aug = self.C_n * n + self.C_p * p
-        R = excess / den + self.B_rad * excess + aug * excess
-        dR_dn = (p / den - excess * self.tau_p / den ** 2) + self.B_rad * p \
-            + self.C_n * excess + aug * p
-        dR_dp = (n / den - excess * self.tau_n / den ** 2) + self.B_rad * n \
-            + self.C_p * excess + aug * n
+        A = 1.0 / den + self.B_rad + aug
+        R = excess * A
+        one_minus_E = -np.expm1(-a)
+        tau_sum = self.tau_p + self.tau_n
+        dni_dn = 0.5 * ni / np.maximum(n, 1e-300)
+        dni_dp = 0.5 * ni / np.maximum(p, 1e-300)
+        dR_dn = p * one_minus_E * A + excess * (-(self.tau_p + tau_sum * dni_dn) / den ** 2 + self.C_n)
+        dR_dp = n * one_minus_E * A + excess * (-(self.tau_n + tau_sum * dni_dp) / den ** 2 + self.C_p)
+        dR_dlnE = -ni2 * A - excess * tau_sum * 0.5 * ni / den ** 2
         if self.G_opt is not None:
-            R = R - self.G_opt          # independent of n, p: the Jacobian is unchanged
-        return R, dR_dn, dR_dp
+            R = R - self.G_opt          # independent of the state: the Jacobian is unchanged
+        return R, dR_dn, dR_dp, dR_dlnE
 
     # ------------------------------------------------------------------
     def fluxes(self, phi, Efn, Efp):
@@ -348,7 +363,11 @@ class DDProblem:
             add(iP[I], iH[I], -_q * 1e6 * (dp[I] - dNa[I]))
 
         # ---------------- recombination ----------------
-        R, dR_dn, dR_dp = self._recombination(n, p)
+        R, dR_dn, dR_dp, dR_dlnE = self._recombination(n, p, Efn, Efp)
+        # explicit dependence on the quasi-Fermi levels through E:
+        # d ln E / d Efn = -1/kT, d ln E / d Efp = +1/kT
+        dR_dEfn = -dR_dlnE / kT
+        dR_dEfp = dR_dlnE / kT
 
         # ---------------- electrons ----------------
         bn = (Efn[1:] - Efn[:-1]) / kT
@@ -378,8 +397,8 @@ class DDProblem:
             d_bim1 = s * dGl_b / kT
             # chain: ln n_j depends on phi_j and Efn_j with the same slope dln_n[j]
             add(iN[I], iP[I], d_lni * dln_n[I] - dR_dn[I] * dn[I] - dR_dp[I] * dp[I])
-            add(iN[I], iN[I], d_lni * dln_n[I] + d_bi - dR_dn[I] * dn[I])
-            add(iN[I], iH[I], -dR_dp[I] * dp[I])
+            add(iN[I], iN[I], d_lni * dln_n[I] + d_bi - dR_dn[I] * dn[I] - dR_dEfn[I])
+            add(iN[I], iH[I], -dR_dp[I] * dp[I] - dR_dEfp[I])
             add(iN[I], iP[I + 1], d_lnip1 * dln_n[I + 1])
             add(iN[I], iN[I + 1], d_lnip1 * dln_n[I + 1] + d_bip1)
             add(iN[I], iP[I - 1], d_lnim1 * dln_n[I - 1])
@@ -397,8 +416,8 @@ class DDProblem:
             d_lpim1 = -s * dHl_la
             d_cim1 = -s * dHl_b / kT
             add(iH[I], iP[I], d_lpi * dln_p[I] + dR_dn[I] * dn[I] + dR_dp[I] * dp[I])
-            add(iH[I], iH[I], d_lpi * dln_p[I] + d_ci + dR_dp[I] * dp[I])
-            add(iH[I], iN[I], dR_dn[I] * dn[I])
+            add(iH[I], iH[I], d_lpi * dln_p[I] + d_ci + dR_dp[I] * dp[I] + dR_dEfp[I])
+            add(iH[I], iN[I], dR_dn[I] * dn[I] + dR_dEfn[I])
             add(iH[I], iP[I + 1], d_lpip1 * dln_p[I + 1])
             add(iH[I], iH[I + 1], d_lpip1 * dln_p[I + 1] + d_cip1)
             add(iH[I], iP[I - 1], d_lpim1 * dln_p[I - 1])

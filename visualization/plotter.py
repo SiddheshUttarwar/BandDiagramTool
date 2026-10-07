@@ -416,11 +416,21 @@ def plot_recombination(
         fig, ax = plt.subplots(figsize=(9, 4))
     x = r.x_nm
     if getattr(r, 'R_srh', None) is None:
-        ax.text(0.5, 0.5, 'No recombination rates in this result', ha='center', va='center',
-                transform=ax.transAxes)
+        ax.text(0.5, 0.5, 'Recombination rates need a current solve.\n'
+                          'Switch off "Flat quasi-Fermi levels" and run again.',
+                ha='center', va='center', transform=ax.transAxes)
         return ax
     total = r.R_srh + r.R_rad + r.R_aug
     peak = float(np.max(np.abs(total))) if len(total) else 0.0
+    if peak == 0.0:
+        ax.text(0.5, 0.5, 'No net recombination: the structure is at equilibrium\n'
+                          '(the quasi-Fermi levels coincide). Apply a bias to see the rates.',
+                ha='center', va='center', transform=ax.transAxes)
+        ax.set_xlabel('Position (nm)', fontsize=11)
+        ax.set_ylabel('Recombination rate (cm$^{-3}$ s$^{-1}$)', fontsize=11)
+        ax.set_xlim(x[0], x[-1])
+        ax.set_title(f'Recombination  (V = {r.V_applied:.2f} V)', fontsize=10)
+        return ax
     floor = max(peak * 1e-12, 1e-30)
     for key, label, colour, lw in (('R_srh', 'Shockley-Read-Hall', _COLORS['Ppz'], 1.6),
                                    ('R_rad', 'Radiative', _COLORS['Psp'], 1.6),

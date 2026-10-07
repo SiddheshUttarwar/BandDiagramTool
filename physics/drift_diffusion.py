@@ -90,7 +90,8 @@ DEFAULT_RECOMBINATION = {'tau_n': 1e-9, 'tau_p': 1e-9, 'B_rad': 1e-11, 'C_n': 1e
 
 def compute_recombination_components(n: np.ndarray, p: np.ndarray, ni: np.ndarray,
                                      tau_n=None, tau_p=None, B_rad=None,
-                                     C_n=None, C_p=None) -> RecombinationComponents:
+                                     C_n=None, C_p=None,
+                                     split_eV=None, kT_eV=None) -> RecombinationComponents:
     """
     SRH, radiative, and Auger recombination rates [cm^-3 s^-1], each
     computed separately -- the same three mechanisms, in the same form, as
@@ -99,6 +100,13 @@ def compute_recombination_components(n: np.ndarray, p: np.ndarray, ni: np.ndarra
         R_SRH = (n p - ni^2) / (tau_p (n + ni) + tau_n (p + ni))
         R_rad = B (n p - ni^2)
         R_Aug = (C_n n + C_p p) (n p - ni^2)
+
+    When the quasi-Fermi-level splitting `split_eV` = Efn - Efp is given
+    (with `kT_eV`), the driving term n p - ni^2 is evaluated as
+    n p (1 - exp(-split/kT)) and ni as sqrt(n p exp(-split/kT)); `ni` is
+    then not used. The two forms are the same for Boltzmann statistics. With
+    Fermi-Dirac or quantum-mechanical densities only the second one is zero
+    at equilibrium, as it must be, so it is the form the solver uses.
 
     The coefficients are scalars or per-node arrays; any left as None takes
     its DEFAULT_RECOMBINATION value. Rates are positive for net
@@ -113,11 +121,16 @@ def compute_recombination_components(n: np.ndarray, p: np.ndarray, ni: np.ndarra
     C_p = d['C_p'] if C_p is None else C_p
 
     np2 = n * p
-    ni2 = ni**2
+    if split_eV is not None:
+        a = np.clip(np.asarray(split_eV, dtype=float) / kT_eV, -600.0, 600.0)
+        excess = np2 * (-np.expm1(-a))
+        ni = np.sqrt(np2 * np.exp(-a))
+    else:
+        excess = np2 - ni**2
 
-    R_srh = (np2 - ni2) / (tau_p * (n + ni) + tau_n * (p + ni))
-    R_rad = B_rad * (np2 - ni2)
-    R_aug = (C_n * n + C_p * p) * (np2 - ni2)
+    R_srh = excess / (tau_p * (n + ni) + tau_n * (p + ni))
+    R_rad = B_rad * excess
+    R_aug = (C_n * n + C_p * p) * excess
 
     return RecombinationComponents(R_srh=R_srh, R_rad=R_rad, R_aug=R_aug)
 

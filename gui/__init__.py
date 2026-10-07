@@ -1,1 +1,1 @@
-"""Tkinter GUI for BandDiagramTool. Launch via `python run_gui.py`."""
+"""Tkinter GUI for EpiBand. Launch via `python run_gui.py`."""

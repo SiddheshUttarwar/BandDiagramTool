@@ -45,6 +45,7 @@ class SolveRequest:
     V_start: float
     V_stop: float
     n_steps: int
+    recombination: Optional[dict] = None   # coefficient overrides, see AlGaNDevice
 
 
 @dataclass
@@ -134,7 +135,8 @@ class SolveWorker:
                               T=req.T, dx_nm=req.dx_nm,
                               include_spontaneous_polarization=req.include_spontaneous_polarization,
                               polarity=req.polarity,
-                              polarization_model=req.polarization_model)
+                              polarization_model=req.polarization_model,
+                              recombination=req.recombination)
         if req.sweep:
             results = device.sweep_voltage(
                 req.V_start, req.V_stop, n_steps=req.n_steps,

@@ -1,5 +1,5 @@
 {
-  "name": "banddiagramtool-docs",
+  "name": "epiband-docs",
   "private": true,
   "description": "Builds docs/*.html from docs/math/*.md with equations pre-rendered to SVG.",
   "scripts": {

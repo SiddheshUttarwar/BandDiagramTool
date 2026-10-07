@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Limits, and comparison with nextnano++ · BandDiagramTool model reference</title>
-<meta name="description" content="Equations, parameters and algorithms of BandDiagramTool, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
+<title>Limits, and comparison with nextnano++ · EpiBand model reference</title>
+<meta name="description" content="Equations, parameters and algorithms of EpiBand, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
-  <a class="brand" href="index.html">BandDiagramTool <span>model reference</span></a>
+  <a class="brand" href="index.html">EpiBand <span>model reference</span></a>
   <a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a>
 </header>
 <div class="layout">
@@ -33,6 +33,7 @@
 <li><a href="12_reciprocal_space_map.html"><span class="n">12</span>Reciprocal space map</a></li>
 <li><a href="13_bands_under_illumination.html"><span class="n">13</span>Bands under illumination</a></li>
 <li><a href="14_defects_under_illumination.html"><span class="n">14</span>Defects under illumination</a></li>
+<li><a href="14a_zincblende_materials.html"><span class="n">15</span>Zincblende arsenides and phosphides</a></li>
 <li><a href="15_benchmark_tables.html"><span class="n">A</span>Benchmark tables</a></li>
     </ol>
   </details>
@@ -57,8 +58,8 @@
 </tr>
 <tr>
 <td>Crystal</td>
-<td>wurtzite Al-In-Ga-N, c-plane, metal- or N-polar</td>
-<td>2, 4</td>
+<td>wurtzite Al-In-Ga-N, c-plane, metal- or N-polar; or zincblende Al-In-Ga-As-P on (001)</td>
+<td>2, 4, 15</td>
 </tr>
 <tr>
 <td>Temperature</td>
@@ -106,8 +107,10 @@
 <p><strong>Structure and materials</strong></p>
 <ul>
 <li>two- and three-dimensional geometry: gates, mesas, current spreading, nanowires, dots</li>
-<li>semi-polar and non-polar orientations; zincblende</li>
-<li>alloys beyond Al-In-Ga-N (ScAlN, BAlN), dielectrics, metals as layers</li>
+<li>semi-polar and non-polar orientations; zincblende on orientations other than (001)</li>
+<li>nitride alloys beyond Al-In-Ga-N (ScAlN, BAlN); antimonides, group IV and II-VI materials;
+dielectrics, metals as layers</li>
+<li>wurtzite and zincblende layers in one structure</li>
 <li>alloy disorder, interface roughness, indium clustering</li>
 <li>relaxation, critical thickness, cracking, dislocations</li>
 </ul>
@@ -146,7 +149,7 @@ the nextnano++ model reference.</p>
 <tr>
 <th>Model</th>
 <th>nextnano++</th>
-<th>BandDiagramTool</th>
+<th>EpiBand</th>
 </tr>
 </thead>
 <tbody>
@@ -158,7 +161,7 @@ the nextnano++ model reference.</p>
 <tr>
 <td>Materials</td>
 <td>group IV, III-V, II-VI; zincblende and wurtzite; database editable</td>
-<td>wurtzite Al-In-Ga-N; parameters in source</td>
+<td>wurtzite Al-In-Ga-N and zincblende Al-In-Ga-As-P (chapter 15); parameters in source</td>
 </tr>
 <tr>
 <td>Crystal orientation</td>
@@ -168,7 +171,7 @@ the nextnano++ model reference.</p>
 <tr>
 <td>Alloy interpolation</td>
 <td>linear, quadratic and cubic schemes; alloys of up to eight components</td>
-<td>linear with pairwise bowing; three components</td>
+<td>linear with pairwise bowing; three nitride binaries, six arsenide and phosphide binaries <a class="eqref" href="14a_zincblende_materials.html#eq-15-2">(15.2)</a></td>
 </tr>
 <tr>
 <td>Band-offset definition</td>
@@ -198,7 +201,7 @@ the nextnano++ model reference.</p>
 <tr>
 <td>Classical densities</td>
 <td>Fermi-Dirac, summed over all conduction valleys and valence bands</td>
-<td>Fermi-Dirac, <span class="m" role="img" aria-label="\Gamma"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: 0;" xmlns="http://www.w3.org/2000/svg" width="1.414ex" height="1.538ex" role="img" focusable="false" viewBox="0 -680 625 680"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="mi"><path data-c="393" d="M128 619Q121 626 117 628T101 631T58 634H25V680H554V676Q556 670 568 560T582 444V440H542V444Q542 445 538 478T523 545T492 598Q454 634 349 634H334Q264 634 249 633T233 621Q232 618 232 339L233 61Q240 54 245 52T270 48T333 46H360V0H348Q324 3 182 3Q51 3 36 0H25V46H58Q100 47 109 49T128 61V619Z"></path></g></g></g></svg></mjx-container></span> valley and three valence bands, <a class="eqref" href="05_electrostatics.html#eq-5-4">(5.4)</a>-<a class="eqref" href="05_electrostatics.html#eq-5-7">(5.7)</a></td>
+<td>Fermi-Dirac; three valence bands; <span class="m" role="img" aria-label="\Gamma"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: 0;" xmlns="http://www.w3.org/2000/svg" width="1.414ex" height="1.538ex" role="img" focusable="false" viewBox="0 -680 625 680"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="mi"><path data-c="393" d="M128 619Q121 626 117 628T101 631T58 634H25V680H554V676Q556 670 568 560T582 444V440H542V444Q542 445 538 478T523 545T492 598Q454 634 349 634H334Q264 634 249 633T233 621Q232 618 232 339L233 61Q240 54 245 52T270 48T333 46H360V0H348Q324 3 182 3Q51 3 36 0H25V46H58Q100 47 109 49T128 61V619Z"></path></g></g></g></svg></mjx-container></span> valley for the nitrides, <span class="m" role="img" aria-label="\Gamma"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: 0;" xmlns="http://www.w3.org/2000/svg" width="1.414ex" height="1.538ex" role="img" focusable="false" viewBox="0 -680 625 680"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="mi"><path data-c="393" d="M128 619Q121 626 117 628T101 631T58 634H25V680H554V676Q556 670 568 560T582 444V440H542V444Q542 445 538 478T523 545T492 598Q454 634 349 634H334Q264 634 249 633T233 621Q232 618 232 339L233 61Q240 54 245 52T270 48T333 46H360V0H348Q324 3 182 3Q51 3 36 0H25V46H58Q100 47 109 49T128 61V619Z"></path></g></g></g></svg></mjx-container></span>, X and L for zincblende, <a class="eqref" href="05_electrostatics.html#eq-5-4">(5.4)</a>-<a class="eqref" href="05_electrostatics.html#eq-5-7">(5.7)</a>, <a class="eqref" href="14a_zincblende_materials.html#eq-15-4">(15.4)</a></td>
 </tr>
 <tr>
 <td>Doping</td>
@@ -233,7 +236,7 @@ the nextnano++ model reference.</p>
 <tr>
 <td>Recombination</td>
 <td>SRH with doping-dependent lifetimes, radiative, Auger with separate <span class="m" role="img" aria-label="C_n"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: -0.357ex;" xmlns="http://www.w3.org/2000/svg" width="2.765ex" height="1.952ex" role="img" focusable="false" viewBox="0 -705 1222.3 862.8"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="msub"><g data-mml-node="mi"><path data-c="1D436" d="M50 252Q50 367 117 473T286 641T490 704Q580 704 633 653Q642 643 648 636T656 626L657 623Q660 623 684 649Q691 655 699 663T715 679T725 690L740 705H746Q760 705 760 698Q760 694 728 561Q692 422 692 421Q690 416 687 415T669 413H653Q647 419 647 422Q647 423 648 429T650 449T651 481Q651 552 619 605T510 659Q484 659 454 652T382 628T299 572T226 479Q194 422 175 346T156 222Q156 108 232 58Q280 24 350 24Q441 24 512 92T606 240Q610 253 612 255T628 257Q648 257 648 248Q648 243 647 239Q618 132 523 55T319 -22Q206 -22 128 53T50 252Z"></path></g><g data-mml-node="mi" transform="translate(748,-150) scale(0.707)"><path data-c="1D45B" d="M21 287Q22 293 24 303T36 341T56 388T89 425T135 442Q171 442 195 424T225 390T231 369Q231 367 232 367L243 378Q304 442 382 442Q436 442 469 415T503 336T465 179T427 52Q427 26 444 26Q450 26 453 27Q482 32 505 65T540 145Q542 153 560 153Q580 153 580 145Q580 144 576 130Q568 101 554 73T508 17T439 -10Q392 -10 371 17T350 73Q350 92 386 193T423 345Q423 404 379 404H374Q288 404 229 303L222 291L189 157Q156 26 151 16Q138 -11 108 -11Q95 -11 87 -5T76 7T74 17Q74 30 112 180T152 343Q153 348 153 366Q153 405 129 405Q91 405 66 305Q60 285 60 284Q58 278 41 278H27Q21 284 21 287Z"></path></g></g></g></g></svg></mjx-container></span>, <span class="m" role="img" aria-label="C_p"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: -0.65ex;" xmlns="http://www.w3.org/2000/svg" width="2.61ex" height="2.245ex" role="img" focusable="false" viewBox="0 -705 1153.7 992.2"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="msub"><g data-mml-node="mi"><path data-c="1D436" d="M50 252Q50 367 117 473T286 641T490 704Q580 704 633 653Q642 643 648 636T656 626L657 623Q660 623 684 649Q691 655 699 663T715 679T725 690L740 705H746Q760 705 760 698Q760 694 728 561Q692 422 692 421Q690 416 687 415T669 413H653Q647 419 647 422Q647 423 648 429T650 449T651 481Q651 552 619 605T510 659Q484 659 454 652T382 628T299 572T226 479Q194 422 175 346T156 222Q156 108 232 58Q280 24 350 24Q441 24 512 92T606 240Q610 253 612 255T628 257Q648 257 648 248Q648 243 647 239Q618 132 523 55T319 -22Q206 -22 128 53T50 252Z"></path></g><g data-mml-node="mi" transform="translate(748,-150) scale(0.707)"><path data-c="1D45D" d="M23 287Q24 290 25 295T30 317T40 348T55 381T75 411T101 433T134 442Q209 442 230 378L240 387Q302 442 358 442Q423 442 460 395T497 281Q497 173 421 82T249 -10Q227 -10 210 -4Q199 1 187 11T168 28L161 36Q160 35 139 -51T118 -138Q118 -144 126 -145T163 -148H188Q194 -155 194 -157T191 -175Q188 -187 185 -190T172 -194Q170 -194 161 -194T127 -193T65 -192Q-5 -192 -24 -194H-32Q-39 -187 -39 -183Q-37 -156 -26 -148H-6Q28 -147 33 -136Q36 -130 94 103T155 350Q156 355 156 364Q156 405 131 405Q109 405 94 377T71 316T59 280Q57 278 43 278H29Q23 284 23 287ZM178 102Q200 26 252 26Q282 26 310 49T356 107Q374 141 392 215T411 325V331Q411 405 350 405Q339 405 328 402T306 393T286 380T269 365T254 350T243 336T235 326L232 322Q232 321 229 308T218 264T204 212Q178 106 178 102Z"></path></g></g></g></g></svg></mjx-container></span>, optical generation</td>
-<td>SRH, radiative, Auger with fixed coefficients <a class="eqref" href="07_currents.html#eq-7-5">(7.5)</a>-<a class="eqref" href="07_currents.html#eq-7-7">(7.7)</a></td>
+<td>SRH with fixed lifetimes, radiative, Auger with separate <span class="m" role="img" aria-label="C_n"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: -0.357ex;" xmlns="http://www.w3.org/2000/svg" width="2.765ex" height="1.952ex" role="img" focusable="false" viewBox="0 -705 1222.3 862.8"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="msub"><g data-mml-node="mi"><path data-c="1D436" d="M50 252Q50 367 117 473T286 641T490 704Q580 704 633 653Q642 643 648 636T656 626L657 623Q660 623 684 649Q691 655 699 663T715 679T725 690L740 705H746Q760 705 760 698Q760 694 728 561Q692 422 692 421Q690 416 687 415T669 413H653Q647 419 647 422Q647 423 648 429T650 449T651 481Q651 552 619 605T510 659Q484 659 454 652T382 628T299 572T226 479Q194 422 175 346T156 222Q156 108 232 58Q280 24 350 24Q441 24 512 92T606 240Q610 253 612 255T628 257Q648 257 648 248Q648 243 647 239Q618 132 523 55T319 -22Q206 -22 128 53T50 252Z"></path></g><g data-mml-node="mi" transform="translate(748,-150) scale(0.707)"><path data-c="1D45B" d="M21 287Q22 293 24 303T36 341T56 388T89 425T135 442Q171 442 195 424T225 390T231 369Q231 367 232 367L243 378Q304 442 382 442Q436 442 469 415T503 336T465 179T427 52Q427 26 444 26Q450 26 453 27Q482 32 505 65T540 145Q542 153 560 153Q580 153 580 145Q580 144 576 130Q568 101 554 73T508 17T439 -10Q392 -10 371 17T350 73Q350 92 386 193T423 345Q423 404 379 404H374Q288 404 229 303L222 291L189 157Q156 26 151 16Q138 -11 108 -11Q95 -11 87 -5T76 7T74 17Q74 30 112 180T152 343Q153 348 153 366Q153 405 129 405Q91 405 66 305Q60 285 60 284Q58 278 41 278H27Q21 284 21 287Z"></path></g></g></g></g></svg></mjx-container></span>, <span class="m" role="img" aria-label="C_p"><mjx-container class="MathJax" jax="SVG"><svg style="vertical-align: -0.65ex;" xmlns="http://www.w3.org/2000/svg" width="2.61ex" height="2.245ex" role="img" focusable="false" viewBox="0 -705 1153.7 992.2"><g stroke="currentColor" fill="currentColor" stroke-width="0" transform="scale(1,-1)"><g data-mml-node="math"><g data-mml-node="msub"><g data-mml-node="mi"><path data-c="1D436" d="M50 252Q50 367 117 473T286 641T490 704Q580 704 633 653Q642 643 648 636T656 626L657 623Q660 623 684 649Q691 655 699 663T715 679T725 690L740 705H746Q760 705 760 698Q760 694 728 561Q692 422 692 421Q690 416 687 415T669 413H653Q647 419 647 422Q647 423 648 429T650 449T651 481Q651 552 619 605T510 659Q484 659 454 652T382 628T299 572T226 479Q194 422 175 346T156 222Q156 108 232 58Q280 24 350 24Q441 24 512 92T606 240Q610 253 612 255T628 257Q648 257 648 248Q648 243 647 239Q618 132 523 55T319 -22Q206 -22 128 53T50 252Z"></path></g><g data-mml-node="mi" transform="translate(748,-150) scale(0.707)"><path data-c="1D45D" d="M23 287Q24 290 25 295T30 317T40 348T55 381T75 411T101 433T134 442Q209 442 230 378L240 387Q302 442 358 442Q423 442 460 395T497 281Q497 173 421 82T249 -10Q227 -10 210 -4Q199 1 187 11T168 28L161 36Q160 35 139 -51T118 -138Q118 -144 126 -145T163 -148H188Q194 -155 194 -157T191 -175Q188 -187 185 -190T172 -194Q170 -194 161 -194T127 -193T65 -192Q-5 -192 -24 -194H-32Q-39 -187 -39 -183Q-37 -156 -26 -148H-6Q28 -147 33 -136Q36 -130 94 103T155 350Q156 355 156 364Q156 405 131 405Q109 405 94 377T71 316T59 280Q57 278 43 278H29Q23 284 23 287ZM178 102Q200 26 252 26Q282 26 310 49T356 107Q374 141 392 215T411 325V331Q411 405 350 405Q339 405 328 402T306 393T286 380T269 365T254 350T243 336T235 326L232 322Q232 321 229 308T218 264T204 212Q178 106 178 102Z"></path></g></g></g></g></svg></mjx-container></span>, coefficients per material <a class="eqref" href="07_currents.html#eq-7-5">(7.5)</a>-<a class="eqref" href="07_currents.html#eq-7-7">(7.7)</a>; optical generation (chapter 13)</td>
 </tr>
 <tr>
 <td>Coupling of current and Poisson</td>

@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from physics.materials.algan import nitride_name
+from physics.materials.alloys import alloy_name
 from devices.layer import (
     AbruptLayer, GradedLayer, QuantumRegionMarker, SurfaceCharge, InterfaceDipole,
 )
@@ -28,10 +28,25 @@ _SUB = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 _ROLE_INDEX = QtCore.Qt.ItemDataRole.UserRole
 
 
+def layer_composition(layer, end: str = "") -> tuple:
+    """(crystal, x_Al, x_In, x_P) of a physical layer; `end` is "" for an
+    abrupt layer and "_start" / "_end" for a graded one."""
+    return (layer.crystal, getattr(layer, "x_Al" + end), getattr(layer, "x_In" + end, 0.0),
+            getattr(layer, "x_P" + end, 0.0))
+
+
+def stack_crystal(layers) -> str:
+    """Crystal system of the stack: that of its first physical layer."""
+    for layer in layers or []:
+        if isinstance(layer, (AbruptLayer, GradedLayer)):
+            return layer.crystal
+    return "wurtzite"
+
+
 def _layer_summary(layer) -> tuple[str, str]:
     """Return (title, subtitle) describing a layer in plain text."""
     if isinstance(layer, AbruptLayer):
-        title = nitride_name(layer.x_Al, getattr(layer, "x_In", 0.0))
+        title = alloy_name(*layer_composition(layer))
         bits = [f"{layer.thickness_nm:g} nm"]
         if layer.n_doping > 0:
             bits.append(f"n={layer.n_doping:.1e}")
@@ -39,8 +54,8 @@ def _layer_summary(layer) -> tuple[str, str]:
             bits.append(f"p={layer.p_doping:.1e}")
         return title, "  ·  ".join(bits)
     if isinstance(layer, GradedLayer):
-        title = (f"{nitride_name(layer.x_Al_start, getattr(layer, 'x_In_start', 0.0))}"
-                 f" → {nitride_name(layer.x_Al_end, getattr(layer, 'x_In_end', 0.0))}")
+        title = (f"{alloy_name(*layer_composition(layer, '_start'))}"
+                 f" → {alloy_name(*layer_composition(layer, '_end'))}")
         bits = [f"{layer.thickness_nm:g} nm", layer.profile]
         if layer.n_doping > 0:
             bits.append(f"n={layer.n_doping:.1e}")
@@ -61,11 +76,15 @@ def layer_colors(layer) -> Optional[tuple[str, str]]:
     """(colour at the bottom face, colour at the top face) of a physical
     layer; None for zero-thickness entries."""
     if isinstance(layer, AbruptLayer):
-        c = theme.material_color(layer.x_Al, getattr(layer, "x_In", 0.0))
+        crystal, xa, xi, xp = layer_composition(layer)
+        c = theme.material_color(xa, xi, xp, crystal)
         return c, c
     if isinstance(layer, GradedLayer):
-        return (theme.material_color(layer.x_Al_start, getattr(layer, "x_In_start", 0.0)),
-                theme.material_color(layer.x_Al_end, getattr(layer, "x_In_end", 0.0)))
+        ends = []
+        for end in ("_start", "_end"):
+            crystal, xa, xi, xp = layer_composition(layer, end)
+            ends.append(theme.material_color(xa, xi, xp, crystal))
+        return tuple(ends)
     return None
 
 
@@ -172,11 +191,15 @@ class LayerStackPanel(QtWidgets.QWidget):
             self._delete(self.selected_index)
 
     def _add_abrupt(self):
-        self.model.add_layer(AbruptLayer(x_Al=0.0, thickness_nm=10.0))
+        # a new layer joins the stack's crystal system: GaAs in an
+        # arsenide/phosphide stack, GaN otherwise
+        material = "AlGaAs" if stack_crystal(self.model.layers) == "zincblende" else None
+        self.model.add_layer(AbruptLayer(x_Al=0.0, thickness_nm=10.0, material=material))
         self.select(len(self.model.layers) - 1)
 
     def _add_graded(self):
-        self.model.add_layer(GradedLayer(x_Al_start=0.0, x_Al_end=0.2, thickness_nm=10.0))
+        material = "AlGaAs" if stack_crystal(self.model.layers) == "zincblende" else None
+        self.model.add_layer(GradedLayer(x_Al_start=0.0, x_Al_end=0.2, thickness_nm=10.0, material=material))
         self.select(len(self.model.layers) - 1)
 
     def _add_quantum_marker(self):

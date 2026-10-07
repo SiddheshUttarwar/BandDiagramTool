@@ -543,6 +543,10 @@ class SolverResult:
     chi: Optional[np.ndarray] = None
     # In composition profile (InGaN / InAlGaN); None or zeros for AlGaN.
     x_In: Optional[np.ndarray] = None
+    # Crystal system ('wurtzite' | 'zincblende') and, for zincblende, the P
+    # fraction of the group-V sublattice.
+    crystal: str = 'wurtzite'
+    x_P: Optional[np.ndarray] = None
     E_h_lh: Optional[np.ndarray] = None
     psi_h_lh: Optional[np.ndarray] = None
     E_h_so: Optional[np.ndarray] = None
@@ -637,11 +641,32 @@ class SolverResult:
 
 
 def _mobility_profiles(g: GridData):
-    """Per-node low-field mobilities [cm^2/Vs]: linear in Al fraction
-    between GaN (300 / 10) and AlN (25 / 2) -- the same endpoints the
-    solver previously averaged over the whole device into one scalar."""
+    """Per-node low-field mobilities [cm^2/Vs] from the grid (see
+    physics.materials.alloys.mobilities). A GridData built without them
+    gets the nitride values: linear in Al fraction between GaN (300 / 10)
+    and AlN (25 / 2)."""
+    if getattr(g, 'mu_n', None) is not None and getattr(g, 'mu_p', None) is not None:
+        return np.asarray(g.mu_n, dtype=float), np.asarray(g.mu_p, dtype=float)
     return (300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al,
             10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al)
+
+
+def dopant_energies(g: GridData):
+    """Per-node (Ed, Ea) [eV] from the grid; the nitride formulas (Si, Mg)
+    for a GridData built without them."""
+    if getattr(g, 'Ed', None) is not None and getattr(g, 'Ea', None) is not None:
+        return np.asarray(g.Ed, dtype=float), np.asarray(g.Ea, dtype=float)
+    x_in = getattr(g, 'x_In', None)
+    if x_in is not None and np.any(x_in > 0):
+        return donor_ionization_energy(g.x_Al, x_in), acceptor_ionization_energy(g.x_Al, x_in)
+    return donor_ionization_energy(g.x_Al), acceptor_ionization_energy(g.x_Al)
+
+
+def recombination_coefficients(g: GridData) -> dict:
+    """{'tau_n', 'tau_p', 'B_rad', 'C_n', 'C_p'}: the grid's per-node
+    recombination coefficients (None where the grid has none, which selects
+    the defaults of physics.drift_diffusion)."""
+    return {k: getattr(g, k, None) for k in ('tau_n', 'tau_p', 'B_rad', 'C_n', 'C_p')}
 
 
 def _dd_problem(g: GridData, Ed_x, Ea_x, surf_idx, surf_density_cm3,
@@ -650,7 +675,7 @@ def _dd_problem(g: GridData, Ed_x, Ea_x, surf_idx, surf_density_cm3,
     return dd_newton.DDProblem(
         g.Ec0, g.Ev0, g.Nc, g.Nv, g.ND, g.NA, Ed_x, Ea_x, g.pol_rho, g.eps_r, g.dx,
         g.T, mu_n, mu_p, surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
-        gamma_n, gamma_p)
+        gamma_n, gamma_p, **recombination_coefficients(g))
 
 
 def _current_density_from_result(result: "SolverResult", grid: GridData) -> float:
@@ -668,8 +693,7 @@ def _legacy_current_density_from_result(result: "SolverResult", grid: GridData) 
     g = grid
     T = g.T
     kBT_eV = kB * T / _q
-    mu_n_avg = float(np.mean(300.0 * (1.0 - g.x_Al) + 25.0 * g.x_Al))
-    mu_p_avg = float(np.mean(10.0 * (1.0 - g.x_Al) + 2.0 * g.x_Al))
+    mu_n_avg, mu_p_avg = (float(np.mean(m)) for m in _mobility_profiles(g))
     n_boltz = np.maximum(g.Nc * np.exp(np.clip((result.Efn - result.Ec) / kBT_eV, -200, 200)), 1e-30)
     gamma_n = np.maximum(result.n, 1e-30) / n_boltz
     psi_n_eff = -result.Ec + kBT_eV * np.log(g.Nc / g.Nc[0]) + kBT_eV * np.log(np.maximum(gamma_n, 1e-10))
@@ -1036,13 +1060,7 @@ def solve_self_consistent(
     # Composition-dependent dopant ionization energies (Si donor, Mg
     # acceptor vs Al fraction -- physics.materials.algan), used by the
     # initial guess and every solve path below.
-    _gxin = getattr(g, 'x_In', None)
-    if _gxin is not None and np.any(_gxin > 0):
-        Ed_x = donor_ionization_energy(g.x_Al, _gxin)
-        Ea_x = acceptor_ionization_energy(g.x_Al, _gxin)
-    else:
-        Ed_x = donor_ionization_energy(g.x_Al)
-        Ea_x = acceptor_ionization_energy(g.x_Al)
+    Ed_x, Ea_x = dopant_energies(g)
     _log   = log_fn if log_fn is not None else print
     if alpha_max is None:
         alpha_max = alpha
@@ -1820,7 +1838,8 @@ def solve_self_consistent(
 
     # --- Recombination rates [cm^-3 s^-1], one value per grid point ---
     ni_final = np.sqrt(g.Nc * g.Nv) * np.exp(-(Ec_final - Ev_final) / (2.0 * kBT_eV))
-    rec = compute_recombination_components(n_final, p_final, ni_final)
+    rec = compute_recombination_components(n_final, p_final, ni_final,
+                                           **recombination_coefficients(g))
 
     # --- Optical gain spectrum (quantum mode, only if a design quantum
     # well was found -- see physics.gain for the model and its caveats) ---
@@ -1832,10 +1851,16 @@ def solve_self_consistent(
         x_Al_well = float(np.mean(g.x_Al[qw_i0:qw_i1]))
         Efn_well = float(np.mean(Efn[qw_i0:qw_i1]))
         Efp_well = float(np.mean(Efp[qw_i0:qw_i1]))
+        gain_kw = {}
+        if getattr(g, 'crystal', 'wurtzite') == 'zincblende':
+            from physics.materials.zincblende import get_zincblende_params
+            well = get_zincblende_params(x_Al_well, float(np.mean(g.x_In[qw_i0:qw_i1])),
+                                         float(np.mean(g.x_P[qw_i0:qw_i1])), T)
+            gain_kw = {'Ep_eV': well.Ep, 'n_r': 3.5}   # arsenide/phosphide refractive index
         spectrum = compute_gain_spectrum(
             E_e, psi_e, g.m_e, hole_bands,
             {'hh': g.m_hh, 'lh': g.m_lh, 'so': g.m_so},
-            Efn_well, Efp_well, T, dx_cell, Lz_m, x_Al_well,
+            Efn_well, Efp_well, T, dx_cell, Lz_m, x_Al_well, **gain_kw,
         )
         if spectrum is not None:
             gain_energy_eV = spectrum.energy_eV
@@ -1869,6 +1894,9 @@ def solve_self_consistent(
         chi=np.asarray(g.chi).copy(),
         x_In=(np.asarray(g.x_In).copy() if getattr(g, 'x_In', None) is not None
               else np.zeros_like(np.asarray(g.x_Al))),
+        crystal=getattr(g, 'crystal', 'wurtzite'),
+        x_P=(np.asarray(g.x_P).copy() if getattr(g, 'x_P', None) is not None
+             else np.zeros_like(np.asarray(g.x_Al))),
         E_h_lh=E_h_lh, psi_h_lh=psi_h_lh, E_h_so=E_h_so, psi_h_so=psi_h_so,
         qcse_transition_eV=qcse_transition_eV, qcse_overlap=qcse_overlap,
         qcse_pair=qcse_pair, qcse_in_well=qcse_in_well, qcse_local_solve=qcse_local_solve,

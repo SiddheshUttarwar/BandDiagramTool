@@ -1,5 +1,5 @@
 """
-BandDiagramTool — main entry point.
+EpiBand — main entry point.
 
 Define your device here and run:
     python main.py

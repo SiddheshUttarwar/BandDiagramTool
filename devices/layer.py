@@ -1,14 +1,23 @@
 """
-Layer and contact dataclasses for building III-nitride device structures.
+Layer and contact dataclasses for building III-V device structures.
 
-Every physical layer is one of three materials (physics.materials.nitrides):
+Every physical layer has a material class (physics.materials.alloys).
+Wurtzite nitrides:
   'AlGaN'    Al(x)Ga(1-x)N          composition x_Al      (x_In must be 0)
   'InGaN'    In(y)Ga(1-y)N          composition x_In      (x_Al must be 0)
   'InAlGaN'  Al(x)In(y)Ga(1-x-y)N   composition x_Al, x_In (x + y <= 1;
              x + y = 1 is AlInN, e.g. lattice-matched Al0.83In0.17N)
-`material` defaults to the simplest class that fits the given fractions,
-so existing AlGaN-only code and saved projects behave exactly as before.
+Zincblende arsenides and phosphides, Al(x)In(y)Ga(1-x-y)As(1-v)P(v) with
+v = x_P:
+  'AlGaAs' (x_Al)   'InGaAs' (x_In)   'AlGaInAs' (x_Al, x_In)   'GaAsP' (x_P)
+  'InGaP' (x_In)    'AlGaInP' (x_Al, x_In)   'InGaAsP' (x_In, x_P)
+  'AlGaInAsP' (x_Al, x_In, x_P)
+  e.g. GaAs = AlGaAs with x_Al = 0, InP = InGaP with x_In = 1.
+`material` defaults to the simplest NITRIDE class that fits the given
+fractions, so existing AlGaN-only code and saved projects behave exactly as
+before; a zincblende layer always names its class.
   x_Al = 0, x_In = 0  ->  GaN;  x_Al = 1 -> AlN;  x_In = 1 -> InN
+A stack is all wurtzite or all zincblende, never both.
 
 Supported grading profiles:
   'abrupt'    - constant composition (same as AbruptLayer)
@@ -35,25 +44,32 @@ physical layers precede and follow them.
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from physics.materials.nitrides import (
-    NitrideMaterial, make_material, infer_material_kind,
-)
+from physics.materials.nitrides import infer_material_kind
+from physics.materials.alloys import KINDS, ZINCBLENDE, crystal_of, make_material
 
 
-def _resolve_material(layer, pairs):
+def _resolve_material(layer, pairs, p_fields):
     """Infer (if None) and validate layer.material against every
-    (x_Al, x_In) composition the layer spans (both ends if graded)."""
+    (x_Al, x_In) composition the layer spans (both ends if graded).
+    `p_fields` names the layer's x_P attribute for each of `pairs`; a class
+    with a fixed group-V composition (InGaP, AlGaInP: all P) sets it itself."""
     if layer.material is None:
         kinds = {infer_material_kind(a, i) for a, i in pairs}
         layer.material = ('InAlGaN' if len(kinds) > 1 or 'InAlGaN' in kinds
                           else kinds.pop())
-    for a, i in pairs:
-        make_material(layer.material, a, i)   # raises ValueError if invalid
+    if layer.material not in KINDS:
+        raise ValueError(f"unknown material '{layer.material}'; choose one of {list(KINDS)}")
+    crystal, free, fixed_p = KINDS[layer.material]
+    if crystal == ZINCBLENDE and 'P' not in free:
+        for name in p_fields:
+            setattr(layer, name, float(fixed_p))
+    for (a, i), name in zip(pairs, p_fields):
+        make_material(layer.material, a, i, getattr(layer, name))   # raises ValueError if invalid
 
 
 @dataclass
 class AbruptLayer:
-    """Single AlGaN layer with uniform composition."""
+    """Single layer with uniform composition."""
     x_Al: float            # Al composition [0, 1]
     thickness_nm: float    # Layer thickness [nm]
     n_doping: float = 0.0  # n-type (donor) doping concentration [cm^-3]
@@ -73,27 +89,35 @@ class AbruptLayer:
         # "no value given") means this layer contributes none.
     dx_nm: Optional[float] = None  # grid spacing for this layer [nm]; None = use the device default
     x_In: float = 0.0              # In fraction (InGaN / InAlGaN layers)
-    material: Optional[str] = None  # 'AlGaN' | 'InGaN' | 'InAlGaN'; None = infer
+    material: Optional[str] = None  # material class (see module docstring); None = infer a nitride
+    x_P: float = 0.0               # P fraction of the group-V sublattice (zincblende layers)
 
     def __post_init__(self):
-        _resolve_material(self, [(self.x_Al, self.x_In)])
+        _resolve_material(self, [(self.x_Al, self.x_In)], ('x_P',))
 
     @property
-    def nitride(self) -> NitrideMaterial:
-        """The layer's material object (physics.materials.nitrides)."""
-        return make_material(self.material, self.x_Al, self.x_In)
+    def crystal(self) -> str:
+        """'wurtzite' | 'zincblende'."""
+        return crystal_of(self.material)
+
+    @property
+    def alloy(self):
+        """The layer's material object (physics.materials.alloys)."""
+        return make_material(self.material, self.x_Al, self.x_In, self.x_P)
+
+    nitride = alloy   # former name
 
     @classmethod
-    def from_material(cls, mat: NitrideMaterial, thickness_nm: float, **kw) -> "AbruptLayer":
+    def from_material(cls, mat, thickness_nm: float, **kw) -> "AbruptLayer":
         """AbruptLayer.from_material(InGaN(0.15), 3.0, n_doping=0)."""
         return cls(x_Al=mat.x_Al, thickness_nm=thickness_nm, x_In=mat.x_In,
-                   material=mat.kind, **kw)
+                   x_P=getattr(mat, 'x_P', 0.0), material=mat.kind, **kw)
 
 
 @dataclass
 class GradedLayer:
     """
-    AlGaN layer with a spatially varying Al composition.
+    Layer with a spatially varying composition.
     Composition runs from x_Al_start (substrate side) to x_Al_end (surface side).
     """
     x_Al_start: float      # Al composition at bottom of layer [0, 1]
@@ -109,20 +133,33 @@ class GradedLayer:
     dx_nm: Optional[float] = None  # grid spacing for this layer [nm]; None = use the device default
     x_In_start: float = 0.0        # In fraction at bottom of layer
     x_In_end: float = 0.0          # In fraction at top of layer
-    material: Optional[str] = None  # 'AlGaN' | 'InGaN' | 'InAlGaN'; None = infer
+    material: Optional[str] = None  # material class (see module docstring); None = infer a nitride
+    x_P_start: float = 0.0         # P fraction at bottom of layer (zincblende layers)
+    x_P_end: float = 0.0           # P fraction at top of layer
 
     def __post_init__(self):
         _resolve_material(self, [(self.x_Al_start, self.x_In_start),
-                                 (self.x_Al_end, self.x_In_end)])
+                                 (self.x_Al_end, self.x_In_end)], ('x_P_start', 'x_P_end'))
+
+    @property
+    def crystal(self) -> str:
+        """'wurtzite' | 'zincblende'."""
+        return crystal_of(self.material)
 
     @classmethod
-    def from_materials(cls, start: NitrideMaterial, end: NitrideMaterial,
-                       thickness_nm: float, **kw) -> "GradedLayer":
+    def from_materials(cls, start, end, thickness_nm: float, **kw) -> "GradedLayer":
         """Graded layer between two materials of the same family, e.g.
         GradedLayer.from_materials(InGaN(0.0), InGaN(0.1), 20)."""
-        kind = start.kind if start.kind == end.kind else 'InAlGaN'
+        if start.kind == end.kind:
+            kind = start.kind
+        elif crystal_of(start.kind) == ZINCBLENDE and crystal_of(end.kind) == ZINCBLENDE:
+            kind = 'AlGaInAsP'
+        else:
+            kind = 'InAlGaN'
         return cls(x_Al_start=start.x_Al, x_Al_end=end.x_Al, thickness_nm=thickness_nm,
-                   x_In_start=start.x_In, x_In_end=end.x_In, material=kind, **kw)
+                   x_In_start=start.x_In, x_In_end=end.x_In,
+                   x_P_start=getattr(start, 'x_P', 0.0), x_P_end=getattr(end, 'x_P', 0.0),
+                   material=kind, **kw)
 
 
 @dataclass

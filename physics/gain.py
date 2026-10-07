@@ -112,6 +112,7 @@ def compute_gain_spectrum(
     linewidth_eV: float = DEFAULT_LINEWIDTH_EV,
     energy_range_eV: Optional[Tuple[float, float]] = None,
     n_points: int = 400,
+    Ep_eV: Optional[float] = None,
 ) -> Optional[GainSpectrum]:
     """
     hole_bands / m_hole_conf: {'hh': (E_h, psi_h), 'lh': ..., 'so': ...} and
@@ -121,14 +122,15 @@ def compute_gain_spectrum(
     subband energies. Lz_m: quantum well width [m] (the 2D-DOS-per-volume
     prefactor's length scale -- use the well's own physical thickness).
     x_Al_well: representative Al composition of the well, for the Kane
-    energy estimate.
+    energy estimate (nitrides); Ep_eV, when given, is used instead.
 
     Returns None if there are no confined states to build a spectrum from.
     """
     if E_e is None or len(E_e) == 0:
         return None
     kT_eV = kB * T / _q
-    Ep_eV = kane_energy_eV(x_Al_well)
+    if Ep_eV is None:
+        Ep_eV = kane_energy_eV(x_Al_well)
     M_T2 = (m0 / 6.0) * (Ep_eV * _q)   # kg * J
 
     transitions = []  # (E_ij_eV, overlap, m_r_kg)

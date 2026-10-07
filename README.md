@@ -1,14 +1,19 @@
-# BandDiagramTool
+# EpiBand
 
-A one-dimensional Schrödinger–Poisson–current solver for wurtzite III-nitride heterostructures
-(GaN, AlN, InN and their alloys), written in Python, with a desktop GUI.
+A one-dimensional Schrödinger–Poisson–current solver for III-V heterostructures, written in
+Python, with a desktop GUI. It covers two material families:
 
-Given a layer stack grown along the c-axis it computes band edges, electric field, polarization
-charge, electron and hole densities, confined states, quantum-well transition energies and, under
-bias, the drift-diffusion current. It can also simulate the X-ray reciprocal space map of the
-strain profile and the band diagram under illumination.
+- **wurtzite nitrides**: GaN, AlN, InN and their alloys, grown along the c-axis;
+- **zincblende arsenides and phosphides**: GaAs, AlAs, InAs, GaP, AlP, InP and their alloys
+  (AlGaAs, InGaAs, InAlAs, InGaP, InGaAsP, AlGaInP, ...), grown along [001].
 
-![BandDiagramTool with a simulated AlN/GaN/AlN XHEMT](docs/assets/gui.png)
+Given a layer stack it computes band edges, electric field, polarization charge, electron and
+hole densities, confined states, quantum-well transition energies and, under bias, the
+drift-diffusion current with its Shockley-Read-Hall, radiative and Auger recombination. It can
+also simulate the X-ray reciprocal space map of the strain profile and the band diagram under
+illumination.
+
+![EpiBand with a simulated AlN/GaN/AlN XHEMT](docs/assets/gui.png)
 
 *The AlN/GaN/AlN XHEMT of Kim et al. (arXiv:2506.16670), from File ▸ New from Template: the
 electron gas at the upper GaN/AlN interface, with the hole gas at the lower one removed by the
@@ -16,12 +21,12 @@ Si δ-doping.*
 
 ## Download for Windows
 
-**[Download BandDiagramTool-windows.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/BandDiagramTool-windows.zip)** (about 97 MB)
+**[Download EpiBand-windows.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip)** (about 97 MB)
 
 No Python and no installation needed:
 
 1. Download the zip and extract it anywhere.
-2. Open the `BandDiagramTool` folder and run `BandDiagramTool.exe`. Keep the `_internal` folder
+2. Open the `EpiBand` folder and run `EpiBand.exe`. Keep the `_internal` folder
    beside it.
 3. Start with **File ▸ New from Template**.
 
@@ -69,15 +74,21 @@ and the validation results, one chapter per topic:
 | [12. Reciprocal space map](https://siddheshuttarwar.github.io/BandDiagramTool/12_reciprocal_space_map.html) | X-ray map from the strain profile, relaxation, comparison with a measured map |
 | [13. Bands under illumination](https://siddheshuttarwar.github.io/BandDiagramTool/13_bands_under_illumination.html) | absorption, generation, the open-circuit solution and photovoltage |
 | [14. Defects under illumination](https://siddheshuttarwar.github.io/BandDiagramTool/14_defects_under_illumination.html) | compensating-defect reduction by light during growth, compared with experiment |
+| [15. Zincblende arsenides and phosphides](https://siddheshuttarwar.github.io/BandDiagramTool/14a_zincblende_materials.html) | GaAs, InP, GaP, InAs and their alloys: valleys, band alignment, strain |
 | [A. Benchmark tables](https://siddheshuttarwar.github.io/BandDiagramTool/15_benchmark_tables.html) | every paper with its measured and computed value |
 
 ## What it is, and what it is not
 
-It is a small, readable, nitride-specific tool whose physics is documented equation by equation
-and whose accuracy has been measured against published experiments.
+It is a small, readable tool whose physics is documented equation by equation. For the nitrides
+its accuracy has been measured against 102 published experiments. The arsenide and phosphide
+model uses the standard Vurgaftman parameter set and has been compared with 25 papers on lasers,
+LEDs, quantum wells, intersubband detectors, band offsets and bulk alloys (9.0 / 10; see
+[chapter 15](https://siddheshuttarwar.github.io/BandDiagramTool/14a_zincblende_materials.html)).
+That benchmark is smaller and has almost no transport data.
 
-It is not a replacement for a general device simulator. It is one-dimensional, c-plane only,
-single-band (no k·p), and its transport model is plain drift-diffusion without tunnelling. The
+It is not a replacement for a general device simulator. It is one-dimensional, one growth
+orientation per family (c-plane wurtzite, (001) zincblende), single-band (no k·p), and its
+transport model is plain drift-diffusion without tunnelling. The
 [limits chapter](https://siddheshuttarwar.github.io/BandDiagramTool/11_limits_and_comparison.html)
 lists what is left out.
 
@@ -123,15 +134,21 @@ The quickest start is **File ▸ New from Template**, which loads a complete dev
 | GaN/AlN quantum well | 2.6 nm well; built-in field and Stark shift |
 | AlGaN deep-UV LED | multiple quantum wells, blocking layer, p-type superlattice |
 | GaN p–n diode | abrupt junction at 2.9 V forward bias |
+| AlGaAs/GaAs HEMT | modulation-doped Al₀.₃Ga₀.₇As/GaAs with Si δ-doping; electron gas without polarization |
+| InGaAs/InP quantum well | 8 nm In₀.₅₃Ga₀.₄₇As lattice-matched to InP; the 1.55 µm transition |
+| AlGaAs/GaAs double heterostructure | GaAs between doped Al₀.₃Ga₀.₇As at 1.3 V; recombination by mechanism |
 
 To build your own, use the **Structure** tab:
 
 1. Press **New** beside the layer table and choose **Layer** (or Graded layer). Each new layer
    goes on top of the stack. The table lists the surface at the top and the substrate at the
    bottom; the `#` column counts from the substrate.
-2. Click a row to select it. Its fields appear under **Selected layer**: material (AlGaN, InGaN
-   or InAlGaN), Al and In fractions, thickness, donors and acceptors in cm⁻³. Typed values are
-   applied automatically.
+2. Click a row to select it. Its fields appear under **Selected layer**: material, composition,
+   thickness, donors and acceptors in cm⁻³. Typed values are applied automatically. The material
+   list has the nitrides (AlGaN, InGaN, InAlGaN) above a line and the arsenides and phosphides
+   (AlGaAs, InGaAs, AlGaInAs, GaAsP, InGaP, AlGaInP, InGaAsP, AlGaInAsP) below it; only the
+   fractions that material uses are shown. GaAs is AlGaAs with Al = 0, InP is InGaP with In = 1,
+   InAlAs is AlGaInAs with Al + In = 1. A structure uses one family, not both.
 3. **Up** and **Down** move the selected layer; **Delete** removes it.
 4. Under **Contacts**, set the top and bottom contact: Ohmic or Schottky, the metal, and for a
    Schottky contact its barrier in eV (`auto` uses the metal work function). A free surface is
@@ -174,13 +191,14 @@ polarization charges. Editing the device afterwards does not re-solve; press Run
 
 ### 4. Read the figures
 
-Switch figures with the toolbar buttons, the **View** menu, or **Ctrl+1** to **Ctrl+9**:
+Switch figures with the toolbar buttons, the **View** menu, or **Ctrl+1** to **Ctrl+9** and **Ctrl+0** for the tenth:
 
 | Figure | Shows |
 |---|---|
 | Bands | conduction and valence band edges, heavy-hole / light-hole / split-off edges, quasi-Fermi levels |
 | Wavefunctions | confined-state probability densities on the band diagram (needs quantum on) |
 | Carriers | electron and hole density on a log scale |
+| Recombination | Shockley-Read-Hall, radiative and Auger rates on a log scale (dashed where a rate is net generation) |
 | Field | electric field; the quasi-electric field of a composition gradient is drawn for reference |
 | Polarization | spontaneous, piezoelectric and total polarization |
 | Strain | in-plane and out-of-plane strain |
@@ -190,6 +208,12 @@ Switch figures with the toolbar buttons, the **View** menu, or **Ctrl+1** to **C
 
 In the graphics area, the palette on the left resets the view, pans, zooms to a rectangle and
 exports. The status bar shows the cursor position.
+
+After a solve under bias the **Summary** pane lists the three recombination mechanisms integrated
+over the device as current densities, their shares, and the radiative efficiency (radiative over
+total). The coefficients are those of each material; to set your own SRH lifetimes, radiative
+coefficient *B* or Auger coefficient *C* for the whole structure, open **Solver settings** on the
+Simulation tab and fill in the fields under *Recombination* (blank means the material value).
 
 The **Style** tab controls what is drawn: **Region shown** zooms every figure to one layer and
 its surroundings (useful for a thin well in a thick device), and checkboxes switch individual
@@ -313,12 +337,41 @@ run it with `python my_script.py`.
 
 | Class | Purpose | Main arguments |
 |---|---|---|
-| `AbruptLayer` | a uniform layer | `x_Al`, `x_In`, `thickness_nm`, `n_doping`, `p_doping`, `relaxed`, `dx_nm` |
-| `GradedLayer` | composition graded from bottom to top | `x_Al_start`, `x_Al_end`, `thickness_nm`, `profile` (`'linear'`, `'parabolic'`, `'stepped'`) |
+| `AbruptLayer` | a uniform layer | `x_Al`, `x_In`, `x_P`, `material`, `thickness_nm`, `n_doping`, `p_doping`, `relaxed`, `dx_nm` |
+| `GradedLayer` | composition graded from bottom to top | `x_Al_start`, `x_Al_end` (and `x_In_*`, `x_P_*`), `material`, `thickness_nm`, `profile` (`'linear'`, `'parabolic'`, `'stepped'`) |
 | `QuantumRegionMarker` | `'start'` / `'end'` of the Schrödinger region | `boundary` |
 | `Contact` | bottom or top contact | `position`, `contact_type` (`'ohmic'` / `'schottky'`), `metal`, `barrier_eV` |
 
 Doping is in cm⁻³, thickness in nm. All are imported from `devices.layer`.
+
+Without `material` a layer is a nitride (`x_Al=0.3` is Al₀.₃Ga₀.₇N). An arsenide or phosphide
+layer names its material class; `x_P` is the phosphorus fraction of the group-V atoms:
+
+```python
+from devices.layer import AbruptLayer, Contact
+from devices.device import Device          # the same class as AlGaNDevice
+
+layers = [
+    AbruptLayer(x_Al=0.0, thickness_nm=100, material='InGaP', x_In=1.0),      # InP
+    AbruptLayer(x_Al=0.0, thickness_nm=8, material='InGaAs', x_In=0.53),      # In0.53Ga0.47As
+    AbruptLayer(x_Al=0.0, thickness_nm=100, material='InGaP', x_In=1.0),
+]
+device = Device(layers, [Contact('bottom', 'ohmic', 'Ti'), Contact('top', 'ohmic', 'Au')], dx_nm=0.25)
+result = device.solve(quantum=True)
+print(result.qcse_transition_eV)           # 0.80 eV, 1.55 µm
+```
+
+| `material` | Fractions you set | Notes |
+|---|---|---|
+| `'AlGaN'`, `'InGaN'`, `'InAlGaN'` | `x_Al` / `x_In` / both | wurtzite |
+| `'AlGaAs'` | `x_Al` | `x_Al=0` is GaAs |
+| `'InGaAs'` | `x_In` | `x_In=1` is InAs |
+| `'AlGaInAs'` | `x_Al`, `x_In` | `x_Al + x_In = 1` is InAlAs |
+| `'GaAsP'` | `x_P` | `x_P=1` is GaP |
+| `'InGaP'` | `x_In` | all phosphorus; `x_In=1` is InP |
+| `'AlGaInP'` | `x_Al`, `x_In` | all phosphorus |
+| `'InGaAsP'` | `x_In`, `x_P` | |
+| `'AlGaInAsP'` | `x_Al`, `x_In`, `x_P` | any composition |
 
 ### Device and solve options
 
@@ -328,6 +381,7 @@ Doping is in cm⁻³, thickness in nm. All are imported from `devices.layer`.
 | `AlGaNDevice(..., dx_nm=...)` | default mesh spacing in nm |
 | `AlGaNDevice(..., polarity='N')` | N-polar growth; default is metal-polar |
 | `AlGaNDevice(..., polarization_model='dreyer2016')` | Dreyer 2016 constants; default is Ambacher 2002 |
+| `AlGaNDevice(..., recombination={'tau_n': 5e-9, 'B_rad': 2e-10})` | replace recombination coefficients in every layer: `tau_n`, `tau_p` in s, `B_rad` in cm³/s, `C_n`, `C_p` in cm⁶/s |
 | `solve(quantum=True)` | include the Schrödinger equation |
 | `solve(V_applied=V)` | drift-diffusion solve under bias |
 | `solve(V_applied=V, flat_qfl=True)` | band diagram under bias without solving for current |
@@ -348,6 +402,8 @@ Doping is in cm⁻³, thickness in nm. All are imported from `devices.layer`.
 | `E_e`, `psi_e`, `E_h`, `psi_h` | subband energies and wavefunctions (quantum solves) |
 | `qcse_transition_eV`, `qcse_overlap` | quantum-well transition energy and overlap |
 | `J_total`, `current_conservation_error` | current density in A/cm² and its conservation check (biased solves) |
+| `R_srh`, `R_rad`, `R_aug` | Shockley-Read-Hall, radiative and Auger recombination rates, cm⁻³ s⁻¹ |
+| `crystal`, `x_Al`, `x_In`, `x_P` | `'wurtzite'` or `'zincblende'`, and the composition profile |
 | `converged`, `n_iterations` | solver status |
 
 ### Plots and CSV
@@ -410,6 +466,7 @@ for layer in out.layers:
 | 102 published experiments, 153 measured values, default settings, nothing tuned per paper | 7.2 / 10 overall |
 | Electron-gas sheet density (56 values) | median 20% above measurement; 57% within 30%, 86% within a factor of two |
 | Dopant levels, polarization charge, hole gases | within 20% or 50 meV |
+| Arsenides and phosphides: 25 published experiments, 38 measured values (lasers, LEDs, quantum wells, intersubband detectors, offsets, bulk alloys) | 9.0 / 10; median energy error 20 meV; one electron-gas value, no bias data |
 | Weakest areas | band offsets involving InN; emission energy of monolayer wells and of LEDs under injection; forward prediction for barriers thinner than about 4 nm |
 
 The [validation chapter](https://siddheshuttarwar.github.io/BandDiagramTool/10_validation.html)
@@ -446,14 +503,15 @@ python -m pytest -m "not slow"    # the quick subset
 | `tests/` | the test suite |
 | `docs/` | the published model reference (`docs/build/` regenerates it) |
 | `run_gui.py` | starts the GUI |
-| `BandDiagramTool.spec` | PyInstaller recipe for the Windows program: `pip install pyinstaller`, then `pyinstaller --noconfirm BandDiagramTool.spec` |
+| `EpiBand.spec` | PyInstaller recipe for the Windows program: `pip install pyinstaller`, then `pyinstaller --noconfirm EpiBand.spec` |
 
 ## Sources
 
 Material parameters and models are taken from the literature; each chapter of the model
 reference names its sources. The main ones:
 
-- Vurgaftman and Meyer (2003): band parameters and deformation potentials
+- Vurgaftman and Meyer (2003): band parameters and deformation potentials of the nitrides
+- Vurgaftman, Meyer and Ram-Mohan (2001): band parameters of the arsenides and phosphides
 - Ambacher et al. (2002) and Bernardini et al. (1997): polarization
 - Dreyer et al. (2016): the alternative polarization set
 - Alberi and Scarpulla (2018) and the North Carolina State University papers of Bryan, Reddy,

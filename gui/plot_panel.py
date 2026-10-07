@@ -40,10 +40,11 @@ import visualization.plotter as _plotter
 from visualization.plotter import (
     plot_band_diagram, plot_wavefunctions, plot_carriers,
     plot_fields, plot_polarization, plot_strain, plot_qcse, plot_rsm, plot_illuminated_bands,
+    plot_recombination, recombination_currents,
 )
-from physics.rsm import REFLECTIONS, simulate_rsm
+from physics.rsm import REFLECTIONS, reflections_for, simulate_rsm
 from visualization.csv_export import save_result_csv, result_filename
-from gui.layer_stack import _layer_summary, layer_colors
+from gui.layer_stack import _layer_summary, layer_colors, stack_crystal
 from gui import theme, widgets
 
 # The GUI draws with the theme's palette and a sans-serif face
@@ -94,6 +95,7 @@ _PANELS = [
     ("Wavefunctions", lambda r, ax=None: plot_wavefunctions(r, ax=ax, n_show_e=16, n_show_h=16,
                                                             show_composition_bg=False)),
     ("Carriers", plot_carriers),
+    ("Recombination", plot_recombination),
     ("Fields", plot_fields),
     ("Polarization", lambda r, ax=None: plot_polarization(r, ax=ax)[0]),
     ("Strain", plot_strain),
@@ -179,6 +181,7 @@ class PlotPanel(QtWidgets.QWidget):
         # so it never fights a zoom choice the user made themselves.
         self._auto_zoom_applied = False
         self._alloys = []
+        self._crystal = "wurtzite"   # of the stack on screen; selects the RSM reflections offered
         self._light_bands = None    # physics.illumination.IlluminatedBands, once solved
         self._rsm = None            # physics.rsm.RSMResult of the result on screen, once calculated
         self._status_callback = None
@@ -506,6 +509,18 @@ class PlotPanel(QtWidgets.QWidget):
             k = int(np.argmax(f))
             put("Peak field", f"{f[k]:.3f} MV/cm at z = {float(r.x_nm[k]):.2f} nm")
 
+        rec = recombination_currents(r)
+        if rec is not None and abs(r.V_applied) > 1e-9:
+            lines.append("")
+            lines.append("RECOMBINATION   integrated over the device, as current density")
+            total = rec["total"]
+            for key, label in (("srh", "Shockley-Read-Hall"), ("rad", "Radiative"), ("aug", "Auger")):
+                share = f"   ({100.0 * rec[key] / total:5.1f} %)" if total > 0 else ""
+                put(label, f"{rec[key]:.4e} A/cm^2{share}")
+            put("Total", f"{total:.4e} A/cm^2")
+            if total > 0:
+                put("Radiative efficiency", f"{rec['iqe']:.4f}   (radiative / total recombination)")
+
         if r.qcse_transition_eV is not None and r.qcse_transition_eV > 0:
             ie, ih = r.qcse_pair if r.qcse_pair is not None else (0, 0)
             lines.append("")
@@ -566,10 +581,20 @@ class PlotPanel(QtWidgets.QWidget):
         self._alloys = []
         for layer in layers or []:
             if hasattr(layer, "x_Al"):
-                self._alloys.append((layer.x_Al, getattr(layer, "x_In", 0.0)))
+                self._alloys.append((layer.x_Al, getattr(layer, "x_In", 0.0), getattr(layer, "x_P", 0.0)))
             elif hasattr(layer, "x_Al_start"):
-                self._alloys.append((layer.x_Al_start, getattr(layer, "x_In_start", 0.0)))
-                self._alloys.append((layer.x_Al_end, getattr(layer, "x_In_end", 0.0)))
+                self._alloys.append((layer.x_Al_start, getattr(layer, "x_In_start", 0.0),
+                                     getattr(layer, "x_P_start", 0.0)))
+                self._alloys.append((layer.x_Al_end, getattr(layer, "x_In_end", 0.0),
+                                     getattr(layer, "x_P_end", 0.0)))
+        crystal = stack_crystal(layers) if layers else self._crystal
+        if crystal != self._crystal:
+            # wurtzite (hkil) and zincblende (hkl) offer different reflections
+            self._crystal = crystal
+            self._rsm = None
+            self._rsm_combo.clear()
+            self._rsm_combo.addItems(list(reflections_for(crystal)))
+            self._rsm_combo.setCurrentText("(224)" if crystal == "zincblende" else "(10-15)")
         if layers:
             start = 0.0
             for i, layer in enumerate(layers):
@@ -652,7 +677,11 @@ class PlotPanel(QtWidgets.QWidget):
         if not self.results:
             self.set_status("Run a simulation first: the map is calculated from its strain profile.")
             return
-        hkl = REFLECTIONS[self._rsm_combo.currentText()]
+        result = self.results[self.current_index]
+        hkl = reflections_for(getattr(result, "crystal", "wurtzite")).get(self._rsm_combo.currentText())
+        if hkl is None:
+            self.set_status("Choose a reflection for this crystal structure.")
+            return
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             self._rsm = simulate_rsm(self.results[self.current_index], hkl, alloys=self._alloys or None)

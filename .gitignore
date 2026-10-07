@@ -11,7 +11,7 @@ __pycache__/
 !/examples/0*.py
 /TestPrograms/
 
-# PyInstaller build output (regenerate with: pyinstaller BandDiagramTool.spec)
+# PyInstaller build output (regenerate with: pyinstaller EpiBand.spec)
 /build/
 /dist/
 pyinstaller_rebuild.log

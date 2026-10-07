@@ -19,7 +19,7 @@ const {AllPackages} = require('mathjax-full/js/input/tex/AllPackages.js');
 
 const SRC = path.join(__dirname, '..', 'math');
 const OUT = path.join(__dirname, '..');
-const SITE_TITLE = 'BandDiagramTool model reference';
+const SITE_TITLE = 'EpiBand model reference';
 const REPO = 'https://github.com/SiddheshUttarwar/BandDiagramTool';
 
 const adaptor = liteAdaptor();
@@ -131,13 +131,13 @@ ${next ? `<a class="next" href="${next.out}"><span>Next</span>${esc(next.title)}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-<meta name="description" content="Equations, parameters and algorithms of BandDiagramTool, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
+<meta name="description" content="Equations, parameters and algorithms of EpiBand, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
-  <a class="brand" href="index.html">BandDiagramTool <span>model reference</span></a>
+  <a class="brand" href="index.html">EpiBand <span>model reference</span></a>
   <a class="repo" href="${REPO}">GitHub</a>
 </header>
 <div class="layout">

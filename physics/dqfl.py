@@ -274,6 +274,9 @@ def simulate_illumination(layers: Sequence, T_growth_C: float = 1040.0, power_W_
         thickness = getattr(layer, 'thickness_nm', None)
         if thickness is None:
             continue                                    # marker, surface states, dipole
+        if getattr(layer, 'crystal', 'wurtzite') != 'wurtzite':
+            raise ValueError("The defect quasi-Fermi-level model covers the III-nitrides only "
+                             "(its compensating defects are H, V_N, C_N and cation-vacancy complexes).")
         if hasattr(layer, 'x_Al'):
             x_al, x_in = layer.x_Al, getattr(layer, 'x_In', 0.0)
         else:                                           # graded: evaluate at mid-composition

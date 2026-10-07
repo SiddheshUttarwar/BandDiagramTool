@@ -161,8 +161,9 @@ def _mott_background(ax, r: SolverResult) -> None:
     what it does and doesn't model, and physics.self_consistent's docstring
     for what the solver's actual carrier-density physics uses.
     """
-    N_mott_donor = donor_mott_density_cm3(r.x_Al, getattr(r, 'x_In', None))
-    N_mott_acceptor = acceptor_mott_density_cm3(r.x_Al, getattr(r, 'x_In', None))
+    comp = (r.x_Al, getattr(r, 'x_In', None), getattr(r, 'x_P', None), getattr(r, 'crystal', 'wurtzite'))
+    N_mott_donor = donor_mott_density_cm3(*comp)
+    N_mott_acceptor = acceptor_mott_density_cm3(*comp)
     mott_mask = (r.ND > N_mott_donor) | (r.NA > N_mott_acceptor)
     _shaded_spans(ax, r.x_nm, mott_mask, color='#9467bd',
                  label='Mott transition (doping > $N_{Mott}$)', alpha=0.16)
@@ -382,6 +383,63 @@ def plot_carriers(
     ax.set_xlim(x[0], x[-1])
     _legend_right(ax, fontsize=9)
     ax.set_title(f'Carrier Density  (V = {r.V_applied:.2f} V)', fontsize=10)
+    ax.grid(True, which='both', alpha=0.3, lw=0.5)
+    return ax
+
+
+def recombination_currents(r: SolverResult) -> Optional[dict]:
+    """Recombination integrated over the device, as current densities
+    [A/cm^2]: {'srh', 'rad', 'aug', 'total'} plus 'iqe', the radiative share
+    of the total. None if the result carries no rates. Positive = net
+    recombination; under forward bias 'total' is the part of the current
+    that recombines inside the structure rather than reaching a contact."""
+    if getattr(r, 'R_srh', None) is None or r.R_rad is None or r.R_aug is None:
+        return None
+    x_cm = np.asarray(r.x_nm, dtype=float) * 1e-7
+    q = 1.602176634e-19
+    integ = getattr(np, 'trapezoid', None) or np.trapz
+    out = {k: float(q * integ(np.asarray(v, dtype=float), x_cm))
+           for k, v in (('srh', r.R_srh), ('rad', r.R_rad), ('aug', r.R_aug))}
+    out['total'] = out['srh'] + out['rad'] + out['aug']
+    out['iqe'] = out['rad'] / out['total'] if out['total'] > 0 else float('nan')
+    return out
+
+
+def plot_recombination(
+    r: SolverResult,
+    ax: Optional[plt.Axes] = None,
+) -> plt.Axes:
+    """Shockley-Read-Hall, radiative and Auger recombination rates on a log
+    scale. Where a rate is negative (net generation, n p < ni^2) its
+    magnitude is drawn dashed."""
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(9, 4))
+    x = r.x_nm
+    if getattr(r, 'R_srh', None) is None:
+        ax.text(0.5, 0.5, 'No recombination rates in this result', ha='center', va='center',
+                transform=ax.transAxes)
+        return ax
+    total = r.R_srh + r.R_rad + r.R_aug
+    peak = float(np.max(np.abs(total))) if len(total) else 0.0
+    floor = max(peak * 1e-12, 1e-30)
+    for key, label, colour, lw in (('R_srh', 'Shockley-Read-Hall', _COLORS['Ppz'], 1.6),
+                                   ('R_rad', 'Radiative', _COLORS['Psp'], 1.6),
+                                   ('R_aug', 'Auger', _COLORS['Ptot'], 1.6),
+                                   (None, 'Total', _COLORS['Ei'], 1.0)):
+        y = total if key is None else np.asarray(getattr(r, key), dtype=float)
+        pos = np.where(y > floor, y, np.nan)
+        neg = np.where(y < -floor, -y, np.nan)
+        style = dict(color=colour, lw=lw, alpha=0.6 if key is None else 1.0)
+        ax.semilogy(x, pos, label=label, **style)
+        if np.any(np.isfinite(neg)):
+            ax.semilogy(x, neg, ls='--', **style)
+    if peak > 0:
+        ax.set_ylim(max(peak * 1e-10, 1e-30), peak * 5.0)
+    ax.set_xlabel('Position (nm)', fontsize=11)
+    ax.set_ylabel('Recombination rate (cm$^{-3}$ s$^{-1}$)', fontsize=11)
+    ax.set_xlim(x[0], x[-1])
+    _legend_right(ax, fontsize=9)
+    ax.set_title(f'Recombination  (V = {r.V_applied:.2f} V; dashed = net generation)', fontsize=10)
     ax.grid(True, which='both', alpha=0.3, lw=0.5)
     return ax
 

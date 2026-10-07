@@ -77,6 +77,16 @@ class ContactsPanel(widgets.Section):
         return row
 
 
+def _optional_positive(text: str):
+    """Blank -> None (use the material value); otherwise a positive number."""
+    if text.strip() == "":
+        return None
+    value = float(text)
+    if value <= 0:
+        raise ValueError("must be positive")
+    return value
+
+
 class SettingsPanel(widgets.Section):
     def __init__(self, model: DeviceModel, parent=None):
         super().__init__("Simulation", parent)
@@ -166,12 +176,22 @@ class SettingsPanel(widgets.Section):
         adv_layout.addLayout(self._row_entry("Damping α", "alpha", s.alpha))
         adv_layout.addLayout(self._row_entry("Electron subbands", "n_states_e", s.n_states_e, cast=int))
         adv_layout.addLayout(self._row_entry("Hole subbands", "n_states_h", s.n_states_h, cast=int))
+        adv_layout.addWidget(widgets.subhead("Recombination"))
+        blank = "Leave blank to use each material's own value."
+        for label, attr, unit, tip in (
+                ("SRH lifetime, e", "tau_n_ns", "ns", "Shockley-Read-Hall electron lifetime. " + blank),
+                ("SRH lifetime, h", "tau_p_ns", "ns", "Shockley-Read-Hall hole lifetime. " + blank),
+                ("Radiative B", "B_rad", "cm³/s", "Radiative recombination coefficient. " + blank),
+                ("Auger C", "C_auger", "cm⁶/s", "Auger coefficient, used for electrons and holes. " + blank)):
+            row = self._row_entry(label, attr, getattr(s, attr), cast=_optional_positive, unit=unit, tip=tip)
+            self._field_vars[attr][0].setPlaceholderText("material")
+            adv_layout.addLayout(row)
         layout.addWidget(self._adv_widget)
         self._toggle_advanced(False)
 
     # ------------------------------------------------------------------
     def _row_entry(self, label, attr, initial, cast=float, unit="", tip=""):
-        text = f"{initial:.10g}" if isinstance(initial, float) else str(initial)
+        text = "" if initial is None else f"{initial:.10g}" if isinstance(initial, float) else str(initial)
         edit = QtWidgets.QLineEdit(text)
         edit.textEdited.connect(lambda text, attr=attr, cast=cast: self._debounced_set_cast(attr, text, cast))
         self._field_vars[attr] = (edit, cast)

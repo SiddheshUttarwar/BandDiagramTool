@@ -1,5 +1,6 @@
 """
-Build the 1D spatial grid from a list of AlGaN layers.
+Build the 1D spatial grid from a list of layers (wurtzite nitrides or
+zincblende arsenides / phosphides -- see physics.materials.alloys).
 
 GridData holds all spatially resolved material profiles needed by the solvers.
 All internal arrays use SI units (m, J, C, F/m, etc.).
@@ -20,6 +21,11 @@ from physics.materials.algan import (
     get_AlGaN_params, get_AlGaN_params_T, get_nitride_params, get_nitride_params_T,
     donor_ionization_energy, acceptor_ionization_energy,
 )
+from physics.materials.alloys import (
+    WURTZITE, ZINCBLENDE, RECOMBINATION_KEYS, crystal_of, get_params, mobilities,
+    recombination_coefficients,
+)
+from physics.grid_utils import central_difference
 from physics.polarization import (
     compute_Psp, compute_strain, compute_Ppz, eps_zz_from_eps_xx,
     compute_pol_charge, compute_quasi_field, interface_sheet_charges,
@@ -126,6 +132,28 @@ class GridData:
     # --- In composition profile (InGaN / InAlGaN layers); zeros for AlGaN ---
     x_In: Optional[np.ndarray] = None
 
+    # --- Crystal system of the stack and, for zincblende, the P fraction of
+    # the group-V sublattice (physics.materials.alloys) ---
+    crystal: str = 'wurtzite'
+    x_P: Optional[np.ndarray] = None
+
+    # --- Dopant ionization energies [eV] and low-field mobilities [cm^2/Vs]
+    # at each node. None on a GridData built by hand: the solvers then fall
+    # back to the nitride formulas. ---
+    Ed: Optional[np.ndarray] = None
+    Ea: Optional[np.ndarray] = None
+    mu_n: Optional[np.ndarray] = None
+    mu_p: Optional[np.ndarray] = None
+
+    # --- Recombination coefficients at each node: SRH lifetimes [s],
+    # radiative B [cm^3/s], Auger C_n / C_p [cm^6/s]. None = the defaults of
+    # physics.drift_diffusion. ---
+    tau_n: Optional[np.ndarray] = None
+    tau_p: Optional[np.ndarray] = None
+    B_rad: Optional[np.ndarray] = None
+    C_n: Optional[np.ndarray] = None
+    C_p: Optional[np.ndarray] = None
+
 
 def _x_Al_profile(layer: AbruptLayer | GradedLayer, n_pts: int) -> np.ndarray:
     """Return the x_Al array for a layer with n_pts grid points."""
@@ -138,15 +166,15 @@ def _x_In_profile(layer: AbruptLayer | GradedLayer, n_pts: int) -> np.ndarray:
 
 
 def _comp_profile(layer: AbruptLayer | GradedLayer, n_pts: int, el: str) -> np.ndarray:
-    """Composition profile of element `el` ('Al' | 'In') across a layer;
-    a graded layer applies the same grading profile to both elements."""
+    """Composition profile of element `el` ('Al' | 'In' | 'P') across a
+    layer; a graded layer applies the same grading profile to every element."""
     if isinstance(layer, AbruptLayer):
-        return np.full(n_pts, layer.x_Al if el == 'Al' else getattr(layer, 'x_In', 0.0))
+        return np.full(n_pts, layer.x_Al if el == 'Al' else getattr(layer, 'x_' + el, 0.0))
 
     if el == 'Al':
         x0, x1 = layer.x_Al_start, layer.x_Al_end
     else:
-        x0, x1 = getattr(layer, 'x_In_start', 0.0), getattr(layer, 'x_In_end', 0.0)
+        x0, x1 = getattr(layer, f'x_{el}_start', 0.0), getattr(layer, f'x_{el}_end', 0.0)
     z = np.linspace(0.0, 1.0, n_pts)  # normalised position within the layer
 
     if layer.profile == 'abrupt':
@@ -185,6 +213,7 @@ def build_grid(
     include_strain_band_shift: bool = True,
     polarity: str = 'metal',
     polarization_model: str = 'ambacher2002',
+    recombination: Optional[dict] = None,
 ) -> GridData:
     """
     Build the 1D simulation grid from an ordered list of layers (bottom → top).
@@ -195,6 +224,11 @@ def build_grid(
         growth axis changes sign; strain and band parameters are unchanged.
     polarization_model : 'ambacher2002' (default) or 'dreyer2016' -- see
         physics.polarization.POLARIZATION_MODELS.
+
+    recombination : optional {'tau_n', 'tau_p' [s], 'B_rad' [cm^3/s], 'C_n',
+        'C_p' [cm^6/s]}: any coefficient given here replaces the material
+        value in every layer (see physics.materials.alloys.
+        recombination_coefficients for the material values).
 
     Parameters
     ----------
@@ -237,6 +271,7 @@ def build_grid(
     # grid_utils for how the solvers consume the resulting per-edge dx.
     x_Al_list  = []
     x_In_list  = []
+    x_P_list   = []
     ND_list    = []
     NA_list    = []
     relaxed_list = []
@@ -285,6 +320,7 @@ def build_grid(
         x_Al_segment = _x_Al_profile(layer, n_pts)
         x_Al_list.append(x_Al_segment)
         x_In_list.append(_x_In_profile(layer, n_pts))
+        x_P_list.append(_comp_profile(layer, n_pts, 'P'))
         ND_list.append(np.full(n_pts, layer.n_doping))
         NA_list.append(np.full(n_pts, layer.p_doping))
         relaxed_list.append(
@@ -300,8 +336,16 @@ def build_grid(
     if not physical_layers:
         raise ValueError("Device stack has no physical (Abrupt/Graded) layers.")
 
+    crystals = {crystal_of(getattr(layer, 'material', None)) for layer in physical_layers}
+    if len(crystals) > 1:
+        raise ValueError("The stack mixes wurtzite nitride layers with zincblende "
+                         "arsenide/phosphide layers; use one crystal system.")
+    crystal = crystals.pop()
+    cubic = crystal == ZINCBLENDE
+
     x_Al_raw = np.concatenate(x_Al_list)
     x_In_raw = np.concatenate(x_In_list)
+    x_P_raw = np.concatenate(x_P_list)
     ND    = np.concatenate(ND_list)
     NA    = np.concatenate(NA_list)
     relaxed = np.concatenate(relaxed_list).astype(bool)
@@ -329,11 +373,12 @@ def build_grid(
         fraction did (Eg rises monotonically with x_Al); it also catches
         InGaN wells, which have no Al contrast at all."""
         if isinstance(layer, AbruptLayer):
-            xa, xi = layer.x_Al, getattr(layer, 'x_In', 0.0)
+            xa, xi, xp = layer.x_Al, getattr(layer, 'x_In', 0.0), getattr(layer, 'x_P', 0.0)
         else:
             xa = 0.5 * (layer.x_Al_start + layer.x_Al_end)
             xi = 0.5 * (getattr(layer, 'x_In_start', 0.0) + getattr(layer, 'x_In_end', 0.0))
-        return get_nitride_params(xa, xi).Eg
+            xp = 0.5 * (getattr(layer, 'x_P_start', 0.0) + getattr(layer, 'x_P_end', 0.0))
+        return get_params(crystal, xa, xi, xp).Eg
 
     def _layer_undoped(layer) -> bool:
         return layer.n_doping <= 0.0 and layer.p_doping <= 0.0
@@ -404,6 +449,12 @@ def build_grid(
     x_Al = np.clip(x_Al, 0.0, 1.0)
     x_In = np.clip(gaussian_filter1d(x_In_raw, sigma=1.0), 0.0, 1.0) if np.any(x_In_raw)         else np.zeros_like(x_Al)
     _has_In = bool(np.any(x_In > 0))
+    x_P = (np.clip(gaussian_filter1d(x_P_raw, sigma=1.0), 0.0, 1.0) if np.any(x_P_raw)
+           else np.zeros_like(x_Al))
+    if cubic:
+        # the smoothing must not push a blended interface node past x_Al + x_In = 1
+        over = np.maximum(x_Al + x_In, 1.0)
+        x_Al, x_In = x_Al / over, x_In / over
 
     # --- Material parameters at each grid point ---
     Eg    = np.empty(N)
@@ -422,8 +473,18 @@ def build_grid(
     # --- Strain ---
     x_sub = float(x_Al[0])   # substrate = bottom layer composition
     x_In_sub = float(x_In[0])
-    eps_xx, eps_zz = (compute_strain(x_Al, x_sub, x_In, x_In_sub) if _has_In
-                      else compute_strain(x_Al, x_sub))
+    if cubic:
+        # Zincblende on (001): the same pseudomorphic relation, with
+        # eps_zz = -2 (c12/c11) eps_xx (the parameter object stores c12, c11
+        # as C13, C33). One parameter set per node, reused below.
+        zb = [get_params(crystal, x_Al[i], x_In[i], x_P[i], T) for i in range(N)]
+        a_layer = np.array([p.a0 for p in zb])
+        poisson = np.array([2.0 * p.C13 / p.C33 for p in zb])
+        eps_xx = (a_layer[0] - a_layer) / a_layer
+        eps_zz = -poisson * eps_xx
+    else:
+        eps_xx, eps_zz = (compute_strain(x_Al, x_sub, x_In, x_In_sub) if _has_In
+                          else compute_strain(x_Al, x_sub))
     # Zero strain where layer is relaxed
     eps_xx[relaxed] = 0.0
     eps_zz[relaxed] = 0.0
@@ -435,12 +496,28 @@ def build_grid(
     has_custom = ~np.isnan(custom_strain_xx)
     if np.any(has_custom):
         eps_xx[has_custom] = custom_strain_xx[has_custom]
-        eps_zz[has_custom] = eps_zz_from_eps_xx(x_Al[has_custom], eps_xx[has_custom],
-                                                x_In[has_custom] if _has_In else None)
+        if cubic:
+            eps_zz[has_custom] = -poisson[has_custom] * eps_xx[has_custom]
+        else:
+            eps_zz[has_custom] = eps_zz_from_eps_xx(x_Al[has_custom], eps_xx[has_custom],
+                                                    x_In[has_custom] if _has_In else None)
 
+    recombination = {k: v for k, v in (recombination or {}).items() if v is not None}
+    unknown = set(recombination) - set(RECOMBINATION_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown recombination coefficient(s) {sorted(unknown)}; "
+                         f"choose from {RECOMBINATION_KEYS}")
+    rec_arr = {k: np.empty(N) for k in RECOMBINATION_KEYS}
+    Ed_arr = np.empty(N)
+    Ea_arr = np.empty(N)
+    mu_n_arr = np.empty(N)
+    mu_p_arr = np.empty(N)
     for i in range(N):
-        p = (get_nitride_params_T(x_Al[i], x_In[i], T) if x_In[i] > 0
-             else get_AlGaN_params_T(x_Al[i], T))
+        if cubic:
+            p = zb[i]
+        else:
+            p = (get_nitride_params_T(x_Al[i], x_In[i], T) if x_In[i] > 0
+                 else get_AlGaN_params_T(x_Al[i], T))
         # Strain-dependent band edges (deformation potentials, Chuang-Chang
         # wurtzite Hamiltonian -- see AlGaNParams.strain_band_shifts). The
         # strain here already includes pseudomorphic, relaxed and the
@@ -451,7 +528,9 @@ def build_grid(
         Eg[i]    = p.Eg + dEc_s - dEv_s
         chi[i]   = p.chi - dEc_s
         eps_r[i] = p.eps_r
-        m_e[i]   = p.m_e_dos
+        # Confinement mass: the nitride conduction band is isotropic; a
+        # zincblende alloy uses the growth-direction mass of its lowest valley.
+        m_e[i]   = p.m_e_par if cubic else p.m_e_dos
         m_hh[i]  = p.m_hh
         # dEv_lh/dEv_so and m_lh/m_so come from the same call: past the
         # LH/SO character crossover (see AlGaNParams.valence_band_structure),
@@ -459,8 +538,19 @@ def build_grid(
         # offset -- fetching mass and offset separately here would silently
         # decouple them.
         dEv_hh[i], dEv_lh[i], dEv_so[i], m_lh[i], m_so[i] = p.valence_offsets_from_top(exx_i, ezz_i)
-        Nc_arr[i] = p.Nc(T)
+        Nc_arr[i] = p.Nc(T, exx_i, ezz_i) if cubic else p.Nc(T)
         Nv_arr[i] = p.Nv(T, exx_i, ezz_i)
+        if cubic:
+            Ed_arr[i], Ea_arr[i], mu_n_arr[i], mu_p_arr[i] = p.Ed, p.Ea, p.mu_n, p.mu_p
+        else:
+            Ed_arr[i] = donor_ionization_energy(x_Al[i], x_In[i])
+            Ea_arr[i] = acceptor_ionization_energy(x_Al[i], x_In[i])
+            mu_n_arr[i], mu_p_arr[i] = mobilities(crystal, x_Al[i])
+        rec_i = ({'tau_n': p.tau_srh, 'tau_p': p.tau_srh, 'B_rad': p.B_rad,
+                  'C_n': p.C_aug, 'C_p': p.C_aug} if cubic
+                 else recombination_coefficients(crystal, x_Al[i], x_In[i]))
+        for k in RECOMBINATION_KEYS:
+            rec_arr[k][i] = recombination.get(k, rec_i[k])
 
     # --- Polarization ---
     # Psp is always computed and kept on GridData for display/diagnostics.
@@ -471,12 +561,19 @@ def build_grid(
     if polarity not in ('metal', 'N'):
         raise ValueError(f"polarity must be 'metal' or 'N', got {polarity!r}")
     _psign = -1.0 if polarity == 'N' else 1.0
-    Psp_arr = _psign * compute_Psp(x_Al, T, _xin, model=polarization_model)
-    Ppz_arr = _psign * compute_Ppz(x_Al, eps_xx, eps_zz, _xin, model=polarization_model)
+    if cubic:
+        # Zincblende on (001): no spontaneous polarization, and biaxial
+        # strain produces no piezoelectric polarization (only e14, shear).
+        Psp_arr = np.zeros(N)
+        Ppz_arr = np.zeros(N)
+    else:
+        Psp_arr = _psign * compute_Psp(x_Al, T, _xin, model=polarization_model)
+        Ppz_arr = _psign * compute_Ppz(x_Al, eps_xx, eps_zz, _xin, model=polarization_model)
     P_total = Psp_arr + Ppz_arr
     P_charge = P_total if include_spontaneous_polarization else Ppz_arr
     pol_rho = compute_pol_charge(P_charge, dx_edges_m)
-    F_quasi = compute_quasi_field(x_Al, dx_edges_m, _xin)
+    F_quasi = (central_difference(np.array([p.chi for p in zb]), dx_edges_m) if cubic
+               else compute_quasi_field(x_Al, dx_edges_m, _xin))
 
     # --- Interface dipoles (devices.layer.InterfaceDipole) ---
     # A fixed structural dipole: two equal-and-opposite sheet charges
@@ -511,7 +608,7 @@ def build_grid(
         i0 = int(np.clip(np.searchsorted(x_nm, pos_nm_surf), 0, N - 1))
         surface_charge_sites.append((i0, surf.states))
 
-    ifaces  = interface_sheet_charges(P_charge, x_Al, x_In=_xin)
+    ifaces  = [] if cubic else interface_sheet_charges(P_charge, x_Al, x_In=_xin)
     iface_idx   = [idx for idx, _ in ifaces]
     iface_sigma = [sig for _, sig in ifaces]
 
@@ -526,8 +623,7 @@ def build_grid(
     if bottom_contact.contact_type == 'ohmic':
         def charge_imbalance_bottom(Ec0_guess: float) -> float:
             Ev0_guess = Ec0_guess - Eg[0]
-            Ed_0 = donor_ionization_energy(x_Al[0], x_In[0])
-            Ea_0 = acceptor_ionization_energy(x_Al[0], x_In[0])
+            Ed_0, Ea_0 = Ed_arr[0], Ea_arr[0]
             Nd_plus = ND[0] / (1.0 + 2.0 * np.exp((0.0 - (Ec0_guess - Ed_0)) / kBT_eV))
             Na_minus = NA[0] / (1.0 + 4.0 * np.exp((Ev0_guess + Ea_0 - 0.0) / kBT_eV))
             n = float(electron_density(Ec0_guess, 0.0, Nc_arr[0], T))
@@ -560,8 +656,7 @@ def build_grid(
     if top_contact.contact_type == 'ohmic':
         def charge_imbalance_top(Ec_top_guess: float) -> float:
             Ev_top_guess = Ec_top_guess - Eg[-1]
-            Ed_top = donor_ionization_energy(x_Al[-1], x_In[-1])
-            Ea_top = acceptor_ionization_energy(x_Al[-1], x_In[-1])
+            Ed_top, Ea_top = Ed_arr[-1], Ea_arr[-1]
             Nd_plus = ND[-1] / (1.0 + 2.0 * np.exp((0.0 - (Ec_top_guess - Ed_top)) / kBT_eV))
             Na_minus = NA[-1] / (1.0 + 4.0 * np.exp((Ev_top_guess + Ea_top - 0.0) / kBT_eV))
             n = float(electron_density(Ec_top_guess, 0.0, Nc_arr[-1], T))
@@ -601,4 +696,7 @@ def build_grid(
         manual_quantum_region=manual_quantum_region,
         surface_charge_sites=surface_charge_sites,
         x_In=x_In,
+        crystal=crystal, x_P=x_P,
+        Ed=Ed_arr, Ea=Ea_arr, mu_n=mu_n_arr, mu_p=mu_p_arr,
+        **rec_arr,
     )

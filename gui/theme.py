@@ -1,5 +1,5 @@
 """
-Shared visual constants for the BandDiagramTool GUI.
+Shared visual constants for the EpiBand GUI.
 
 The interface itself uses the platform's native widgets (see apply()), in
 the manner of established desktop scientific software: menu bar, toolbar,
@@ -108,13 +108,32 @@ def shade(color: str, amount: float) -> str:
     return _hex(_mix(_rgb(color), _rgb(TEXT), amount))
 
 
-def material_color(x_al: float, x_in: float = 0.0) -> str:
-    """Colour of an Al(x)In(y)Ga(1-x-y)N composition: GaN blue, toward
-    violet with Al and toward green with In. The same scale colours the
-    device cross-section and the layer bands behind every figure."""
+# Arsenides and phosphides: warm hues, apart from the nitrides' cool ones.
+_ZB = {
+    ("Ga", "As"): (0xE0, 0x7A, 0x2C),   # orange
+    ("Al", "As"): (0xC8, 0x3F, 0x5E),   # crimson
+    ("In", "As"): (0x8C, 0x5E, 0x34),   # brown
+    ("Ga", "P"): (0xE2, 0xB0, 0x24),    # amber
+    ("Al", "P"): (0xA9, 0xB8, 0x2E),    # olive
+    ("In", "P"): (0x22, 0xA3, 0xA6),    # teal
+}
+
+
+def material_color(x_al: float, x_in: float = 0.0, x_p: float = 0.0, crystal: str = "wurtzite") -> str:
+    """Colour of a composition. Nitrides, Al(x)In(y)Ga(1-x-y)N: GaN blue,
+    toward violet with Al and toward green with In. Zincblende,
+    Al(x)In(y)Ga(1-x-y)As(1-v)P(v): a blend of the six binaries' colours.
+    The same scale colours the device cross-section and the layer bands
+    behind every figure."""
     x_al = max(0.0, min(1.0, float(x_al)))
     x_in = max(0.0, min(1.0, float(x_in)))
     z = max(0.0, 1.0 - x_al - x_in)
+    if crystal == "zincblende":
+        x_p = max(0.0, min(1.0, float(x_p)))
+        w = {("Ga", "As"): z * (1 - x_p), ("Al", "As"): x_al * (1 - x_p), ("In", "As"): x_in * (1 - x_p),
+             ("Ga", "P"): z * x_p, ("Al", "P"): x_al * x_p, ("In", "P"): x_in * x_p}
+        total = sum(w.values()) or 1.0
+        return _hex(tuple(int(round(sum(w[k] * _ZB[k][c] for k in w) / total)) for c in range(3)))
     return _hex(tuple(int(round(z * g + x_al * a + x_in * i)) for g, a, i in zip(_GAN, _ALN, _INN)))
 
 
@@ -148,7 +167,7 @@ def sci(value: float, digits: int = 2) -> str:
 # ---- Drawn assets ---------------------------------------------------------
 def _asset_dir() -> str:
     import tempfile
-    d = os.path.join(tempfile.gettempdir(), "banddiagramtool_ui_v3")
+    d = os.path.join(tempfile.gettempdir(), "epiband_ui_v3")
     os.makedirs(d, exist_ok=True)
     return d
 

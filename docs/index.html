@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BandDiagramTool model reference</title>
-<meta name="description" content="Equations, parameters and algorithms of BandDiagramTool, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
+<title>EpiBand model reference</title>
+<meta name="description" content="Equations, parameters and algorithms of EpiBand, a 1D Schrödinger-Poisson-current solver for III-nitride heterostructures.">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
-  <a class="brand" href="index.html">BandDiagramTool <span>model reference</span></a>
+  <a class="brand" href="index.html">EpiBand <span>model reference</span></a>
   <a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a>
 </header>
 <div class="layout">
@@ -33,16 +33,19 @@
 <li><a href="12_reciprocal_space_map.html"><span class="n">12</span>Reciprocal space map</a></li>
 <li><a href="13_bands_under_illumination.html"><span class="n">13</span>Bands under illumination</a></li>
 <li><a href="14_defects_under_illumination.html"><span class="n">14</span>Defects under illumination</a></li>
+<li><a href="14a_zincblende_materials.html"><span class="n">15</span>Zincblende arsenides and phosphides</a></li>
 <li><a href="15_benchmark_tables.html"><span class="n">A</span>Benchmark tables</a></li>
     </ol>
   </details>
 </aside>
 <main id="content">
 <article>
-<h1>BandDiagramTool model reference</h1>
-<p>BandDiagramTool is a one-dimensional Schrödinger-Poisson-current solver for wurtzite
-Al-In-Ga-N layer stacks grown along the c-axis. This reference states the equations it solves,
-the parameters that enter them, and the algorithms that couple them.</p>
+<h1>EpiBand model reference</h1>
+<p>EpiBand is a one-dimensional Schrödinger-Poisson-current solver for III-V layer stacks: wurtzite
+Al-In-Ga-N grown along the c-axis, and zincblende arsenides and phosphides of Al, Ga and In grown
+along [001]. This reference states the equations it solves, the parameters that enter them, and
+the algorithms that couple them. Chapters 2 to 4 give the material model of the nitrides and
+chapter 15 that of the arsenides and phosphides; all other chapters apply to both.</p>
 <p>It is organised by physical model, in the same order the program evaluates them. Equations are
 numbered by chapter, so <a class="eqref" href="05_electrostatics.html#eq-5-4">(5.4)</a> is the fourth equation of chapter 5.</p>
 <h2 id="chapters"><a class="anchor" href="#chapters" aria-label="Link to this section">#</a>Chapters</h2>
@@ -126,6 +129,11 @@ numbered by chapter, so <a class="eqref" href="05_electrostatics.html#eq-5-4">(5
 <td>excess carriers during growth, the chemical potential a defect forms against, comparison with experiment</td>
 </tr>
 <tr>
+<td>15</td>
+<td><a href="14a_zincblende_materials.html">Zincblende arsenides and phosphides</a></td>
+<td>GaAs, InP, GaP, InAs and their alloys: interpolation, conduction valleys, band alignment, strain</td>
+</tr>
+<tr>
 <td>A</td>
 <td><a href="15_benchmark_tables.html">Appendix: benchmark tables</a></td>
 <td>every paper, structure, measured and computed value</td>
@@ -137,7 +145,7 @@ numbered by chapter, so <a class="eqref" href="05_electrostatics.html#eq-5-4">(5
         |
         v
  1. grid                                     chapter 1
- 2. material parameters at every node        chapter 2
+ 2. material parameters at every node        chapter 2 (nitrides), 15 (arsenides, phosphides)
  3. strain  -&gt;  band-edge shifts             chapter 3
  4. polarization  -&gt;  fixed charge           chapter 4
         |
@@ -313,7 +321,7 @@ With energies in eV and potential in V the factor <span class="m" role="img" ari
 </tr>
 <tr>
 <td>Materials</td>
-<td><code>physics/materials/algan.py</code>, <code>nitrides.py</code>, <code>metals.py</code></td>
+<td><code>physics/materials/algan.py</code>, <code>nitrides.py</code>, <code>zincblende.py</code>, <code>alloys.py</code>, <code>metals.py</code></td>
 </tr>
 <tr>
 <td>Strain and polarization</td>

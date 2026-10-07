@@ -50,7 +50,7 @@ def _lut_cache_path() -> str:
     without admin rights."""
     if getattr(sys, 'frozen', False):
         base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
-        cache_dir = os.path.join(base, 'BandDiagramTool')
+        cache_dir = os.path.join(base, 'EpiBand')
         try:
             os.makedirs(cache_dir, exist_ok=True)
         except OSError:

@@ -1,5 +1,5 @@
 """
-BandDiagramTool GUI entry point.
+EpiBand GUI entry point.
 
 Usage:
     python run_gui.py
@@ -8,7 +8,7 @@ Build a device by adding/reordering layers, editing their properties,
 setting contacts, and either solving a single bias point or running a
 voltage sweep — no Python required.
 
-Setting the environment variable BANDDIAGRAMTOOL_SELFTEST to a file path
+Setting the environment variable EPIBAND_SELFTEST to a file path
 makes the program load a template, solve it, write one line with the result
 to that file and exit. It is how the packaged .exe is checked after a build.
 """
@@ -64,11 +64,11 @@ def _selftest(app, window, path: str) -> None:
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("BandDiagramTool")
+    app.setApplicationName("EpiBand")
     theme.apply(app)
     window = App()
     window.show()
-    selftest = os.environ.get("BANDDIAGRAMTOOL_SELFTEST")
+    selftest = os.environ.get("EPIBAND_SELFTEST")
     if selftest:
         QtCore.QTimer.singleShot(500, lambda: _selftest(app, window, selftest))
     sys.exit(app.exec())

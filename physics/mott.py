@@ -45,31 +45,40 @@ def _mott_density_cm3(m_dos_m0: float, eps_r: float) -> float:
     return N_mott_m3 * 1e-6                 # m^-3 -> cm^-3
 
 
-def donor_mott_density_cm3(x_Al, x_In=None):
+def _params_along(x_Al, x_In, x_P, crystal):
+    """Parameter object at each composition (computed once per distinct one)."""
+    x_arr = np.atleast_1d(np.asarray(x_Al, dtype=float))
+    y_arr = np.zeros_like(x_arr) if x_In is None else np.atleast_1d(np.asarray(x_In, dtype=float))
+    v_arr = np.zeros_like(x_arr) if x_P is None else np.atleast_1d(np.asarray(x_P, dtype=float))
+    cache = {}
+    out = []
+    for xa, xi, xp in zip(x_arr, y_arr, v_arr):
+        key = (round(float(xa), 6), round(float(xi), 6), round(float(xp), 6))
+        if key not in cache:
+            if crystal == 'zincblende':
+                from physics.materials.zincblende import get_zincblende_params
+                cache[key] = get_zincblende_params(*key)
+            else:
+                cache[key] = get_AlGaN_params(xa) if xi == 0 else get_nitride_params(xa, xi)
+        out.append(cache[key])
+    return out
+
+
+def donor_mott_density_cm3(x_Al, x_In=None, x_P=None, crystal='wurtzite'):
     """
     N_Mott [cm^-3] for a hydrogenic donor (e.g. Si) at composition x_Al,
     using the conduction-band DOS effective mass. Accepts a scalar or array.
     """
     scalar = np.ndim(x_Al) == 0
-    x_arr = np.atleast_1d(np.asarray(x_Al, dtype=float))
-    y_arr = np.zeros_like(x_arr) if x_In is None else np.atleast_1d(np.asarray(x_In, dtype=float))
-    out = np.empty_like(x_arr)
-    for i, xi in enumerate(x_arr):
-        p = get_AlGaN_params(xi) if y_arr[i] == 0 else get_nitride_params(xi, y_arr[i])
-        out[i] = _mott_density_cm3(p.m_e_dos, p.eps_r)
+    out = np.array([_mott_density_cm3(p.m_e_dos, p.eps_r) for p in _params_along(x_Al, x_In, x_P, crystal)])
     return float(out[0]) if scalar else out
 
 
-def acceptor_mott_density_cm3(x_Al, x_In=None):
+def acceptor_mott_density_cm3(x_Al, x_In=None, x_P=None, crystal='wurtzite'):
     """
     N_Mott [cm^-3] for a hydrogenic acceptor (e.g. Mg) at composition x_Al,
     using the valence-band DOS effective mass. Accepts a scalar or array.
     """
     scalar = np.ndim(x_Al) == 0
-    x_arr = np.atleast_1d(np.asarray(x_Al, dtype=float))
-    y_arr = np.zeros_like(x_arr) if x_In is None else np.atleast_1d(np.asarray(x_In, dtype=float))
-    out = np.empty_like(x_arr)
-    for i, xi in enumerate(x_arr):
-        p = get_AlGaN_params(xi) if y_arr[i] == 0 else get_nitride_params(xi, y_arr[i])
-        out[i] = _mott_density_cm3(p.m_h_dos, p.eps_r)
+    out = np.array([_mott_density_cm3(p.m_h_dos, p.eps_r) for p in _params_along(x_Al, x_In, x_P, crystal)])
     return float(out[0]) if scalar else out

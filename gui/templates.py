@@ -112,6 +112,60 @@ def _uv_led() -> DeviceModel:
     return m
 
 
+def _gaas_hemt() -> DeviceModel:
+    """Modulation-doped Al0.3Ga0.7As/GaAs heterostructure: Si delta-doping
+    behind a 10 nm spacer, GaAs cap, Schottky gate."""
+    m = DeviceModel()
+    m.layers = [AbruptLayer(x_Al=0.0, thickness_nm=400, material='AlGaAs', p_doping=1e14),
+                QuantumRegionMarker(boundary='start'),
+                AbruptLayer(x_Al=0.0, thickness_nm=40, material='AlGaAs', dx_nm=0.2),
+                AbruptLayer(x_Al=0.3, thickness_nm=10, material='AlGaAs', dx_nm=0.2),      # spacer
+                QuantumRegionMarker(boundary='end'),
+                AbruptLayer(x_Al=0.3, thickness_nm=2, material='AlGaAs', n_doping=2.5e19, dx_nm=0.2),   # Si delta, 5e12 cm^-2
+                AbruptLayer(x_Al=0.3, thickness_nm=25, material='AlGaAs', dx_nm=0.5),
+                AbruptLayer(x_Al=0.0, thickness_nm=5, material='AlGaAs', dx_nm=0.5)]       # GaAs cap
+    m.bottom_contact = Contact('bottom', 'ohmic', 'Ti')
+    m.top_contact = Contact('top', 'schottky', 'Au', barrier_eV=0.8)
+    m.settings.dx_nm = 2.0
+    m.settings.quantum = True
+    m.settings.max_iter = 500
+    return m
+
+
+def _inp_well() -> DeviceModel:
+    """8 nm In0.53Ga0.47As well lattice-matched to InP: 1.55 um emission."""
+    m = DeviceModel()
+    m.layers = [AbruptLayer(x_Al=0.0, x_In=1.0, thickness_nm=100, material='InGaP'),
+                QuantumRegionMarker(boundary='start'),
+                AbruptLayer(x_Al=0.0, x_In=1.0, thickness_nm=10, material='InGaP', dx_nm=0.1),
+                AbruptLayer(x_Al=0.0, x_In=0.53, thickness_nm=8, material='InGaAs', dx_nm=0.1),
+                AbruptLayer(x_Al=0.0, x_In=1.0, thickness_nm=10, material='InGaP', dx_nm=0.1),
+                QuantumRegionMarker(boundary='end'),
+                AbruptLayer(x_Al=0.0, x_In=1.0, thickness_nm=100, material='InGaP')]
+    m.bottom_contact = Contact('bottom', 'ohmic', 'Ti')
+    m.top_contact = Contact('top', 'ohmic', 'Au')
+    m.settings.dx_nm = 1.0
+    m.settings.quantum = True
+    m.settings.max_iter = 500
+    return m
+
+
+def _gaas_led() -> DeviceModel:
+    """Al0.3Ga0.7As / GaAs / Al0.3Ga0.7As double heterostructure under
+    forward bias: where the carriers recombine, and by which mechanism."""
+    m = DeviceModel()
+    m.layers = [AbruptLayer(x_Al=0.3, thickness_nm=200, material='AlGaAs', n_doping=1e18),
+                AbruptLayer(x_Al=0.0, thickness_nm=100, material='AlGaAs'),
+                AbruptLayer(x_Al=0.3, thickness_nm=200, material='AlGaAs', p_doping=1e18)]
+    m.bottom_contact = Contact('bottom', 'ohmic', 'Ti')
+    m.top_contact = Contact('top', 'ohmic', 'Au')
+    m.settings.dx_nm = 1.0
+    m.settings.quantum = False
+    m.settings.V_applied = 1.3
+    m.settings.max_iter = 500
+    return m
+
+
 TEMPLATES: List[Template] = [
     Template("hemt", "AlGaN/GaN HEMT",
              "25 nm Al₀.₃Ga₀.₇N barrier on GaN. Polarization-induced "
@@ -133,6 +187,18 @@ TEMPLATES: List[Template] = [
              "Abrupt junction at 2.9 V forward bias. Drift-diffusion with "
              "quasi-Fermi level splitting and conserved current.",
              ("Transport", "Bias"), _pn_diode),
+    Template("gaas_hemt", "AlGaAs/GaAs HEMT",
+             "Modulation-doped Al₀.₃Ga₀.₇As/GaAs heterostructure with Si δ-doping "
+             "behind a 10 nm spacer. Two-dimensional electron gas without polarization.",
+             ("2DEG", "Arsenides"), _gaas_hemt),
+    Template("inp_well", "InGaAs/InP quantum well",
+             "8 nm In₀.₅₃Ga₀.₄₇As well lattice-matched to InP. Confined states "
+             "and the 1.55 µm transition.",
+             ("Optics", "Phosphides"), _inp_well),
+    Template("gaas_led", "AlGaAs/GaAs double heterostructure",
+             "GaAs active layer between doped Al₀.₃Ga₀.₇As at 1.3 V forward bias. "
+             "SRH, radiative and Auger recombination and the radiative efficiency.",
+             ("Recombination", "Bias"), _gaas_led),
 ]
 
 

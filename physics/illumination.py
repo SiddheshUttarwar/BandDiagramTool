@@ -47,7 +47,6 @@ import numpy as np
 from physics import dd_newton
 from physics.dqfl import absorption
 from physics.grid_utils import node_spacings
-from physics.materials.algan import acceptor_ionization_energy, donor_ionization_energy
 
 _Q = 1.602176634e-19
 
@@ -107,12 +106,8 @@ def solve_illuminated(device, wavelength_nm: float = 300.0, power_W_cm2: float =
     if dark is None:
         dark = device.solve(V_applied=0.0, quantum=False)
     g = device.build_grid()
-    x_in = getattr(g, 'x_In', None)
-    if x_in is not None and np.any(np.asarray(x_in) > 0):
-        Ed, Ea = donor_ionization_energy(g.x_Al, x_in), acceptor_ionization_energy(g.x_Al, x_in)
-    else:
-        Ed, Ea = donor_ionization_energy(g.x_Al), acceptor_ionization_energy(g.x_Al)
-    from physics.self_consistent import _dd_problem
+    from physics.self_consistent import _dd_problem, dopant_energies
+    Ed, Ea = dopant_energies(g)
     prob = _dd_problem(g, Ed, Ea, *_surface_arrays(g))
     G, absorbed, photon_eV = generation_profile(g, wavelength_nm, power_W_cm2, above_gap_cm)
 

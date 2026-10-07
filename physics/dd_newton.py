@@ -55,8 +55,9 @@ from physics.poisson import _assemble_laplacian
 from physics.fermi_dirac import fermi_half, dfermi_half
 from physics.drift_diffusion import bernoulli, dbernoulli
 
-# Recombination coefficients: same standard III-Nitride values as
-# physics.drift_diffusion.compute_recombination_components.
+# Default recombination coefficients (the III-nitride values of
+# physics.drift_diffusion.DEFAULT_RECOMBINATION), used when a DDProblem is
+# built without per-node coefficients.
 _TAU_N = 1e-9
 _TAU_P = 1e-9
 _B_RAD = 1e-11
@@ -207,8 +208,19 @@ class DDProblem:
     # Optical generation rate [cm^-3 s^-1] per node (physics.illumination);
     # None = dark. It enters the continuity equations as R - G.
     G_opt: Optional[np.ndarray] = None
+    # Recombination coefficients, scalar or per node: SRH lifetimes [s],
+    # radiative B [cm^3/s], Auger C_n, C_p [cm^6/s]. None = module defaults.
+    tau_n: object = None
+    tau_p: object = None
+    B_rad: object = None
+    C_n: object = None
+    C_p: object = None
 
     def __post_init__(self):
+        for name, default in (('tau_n', _TAU_N), ('tau_p', _TAU_P), ('B_rad', _B_RAD),
+                              ('C_n', _C_AUG), ('C_p', _C_AUG)):
+            if getattr(self, name) is None:
+                setattr(self, name, default)
         self.N = len(self.Ec0)
         self.kT = kB * self.T / _q
         eps_m, eps_p, h1, h2, cw = _assemble_laplacian(self.eps_r, self.dx)
@@ -281,12 +293,13 @@ class DDProblem:
         ni = np.sqrt(ni2)
         np_ = n * p
         excess = np_ - ni2
-        den = _TAU_P * (n + ni) + _TAU_N * (p + ni)
-        R = excess / den + _B_RAD * excess + _C_AUG * (n + p) * excess
-        dR_dn = (p / den - excess * _TAU_P / den ** 2) + _B_RAD * p \
-            + _C_AUG * (excess + (n + p) * p)
-        dR_dp = (n / den - excess * _TAU_N / den ** 2) + _B_RAD * n \
-            + _C_AUG * (excess + (n + p) * n)
+        den = self.tau_p * (n + ni) + self.tau_n * (p + ni)
+        aug = self.C_n * n + self.C_p * p
+        R = excess / den + self.B_rad * excess + aug * excess
+        dR_dn = (p / den - excess * self.tau_p / den ** 2) + self.B_rad * p \
+            + self.C_n * excess + aug * p
+        dR_dp = (n / den - excess * self.tau_n / den ** 2) + self.B_rad * n \
+            + self.C_p * excess + aug * n
         if self.G_opt is not None:
             R = R - self.G_opt          # independent of n, p: the Jacobian is unchanged
         return R, dR_dn, dR_dp

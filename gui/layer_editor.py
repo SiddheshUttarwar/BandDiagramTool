@@ -37,6 +37,9 @@ from devices.layer import (
     AbruptLayer, GradedLayer, QuantumRegionMarker, SurfaceCharge,
     SurfaceState, InterfaceDipole,
 )
+from physics.materials.alloys import (
+    NITRIDE_KINDS, ZINCBLENDE_KINDS, free_fractions, normalize_composition,
+)
 from gui.models import DeviceModel
 from gui import widgets
 
@@ -68,6 +71,9 @@ _FIELD_DISPLAY = {
     "Al end (0-1)": ("Al at top", "", "", "Aluminium mole fraction at the top face, 0 to 1"),
     "In start (0-1)": ("In at bottom", "", "", "Indium mole fraction at the bottom face, 0 to 1"),
     "In end (0-1)": ("In at top", "", "", "Indium mole fraction at the top face, 0 to 1"),
+    "P fraction (0-1)": ("P fraction", "", "", "Phosphorus fraction of the group-V atoms, 0 to 1 (the rest is As)"),
+    "P start (0-1)": ("P at bottom", "", "", "Phosphorus fraction at the bottom face, 0 to 1"),
+    "P end (0-1)": ("P at top", "", "", "Phosphorus fraction at the top face, 0 to 1"),
     "Thickness (nm)": ("Thickness", "nm", "", ""),
     "n-doping (cm^-3)": ("Donors", "cm⁻³", "", "Donor concentration (n-type doping)"),
     "p-doping (cm^-3)": ("Acceptors", "cm⁻³", "", "Acceptor concentration (p-type doping)"),
@@ -181,6 +187,7 @@ class LayerEditorPanel(widgets.Section):
             if isinstance(layer, GradedLayer):
                 new_layer = AbruptLayer(x_Al=layer.x_Al_start, thickness_nm=layer.thickness_nm,
                                          x_In=getattr(layer, "x_In_start", 0.0),
+                                         x_P=getattr(layer, "x_P_start", 0.0),
                                          material=getattr(layer, "material", None),
                                          n_doping=layer.n_doping, p_doping=layer.p_doping,
                                          relaxed=layer.relaxed, custom_strain_xx=layer.custom_strain_xx,
@@ -195,6 +202,8 @@ class LayerEditorPanel(widgets.Section):
                 new_layer = GradedLayer(x_Al_start=layer.x_Al, x_Al_end=layer.x_Al,
                                          x_In_start=getattr(layer, "x_In", 0.0),
                                          x_In_end=getattr(layer, "x_In", 0.0),
+                                         x_P_start=getattr(layer, "x_P", 0.0),
+                                         x_P_end=getattr(layer, "x_P", 0.0),
                                          material=getattr(layer, "material", None),
                                          thickness_nm=layer.thickness_nm,
                                          n_doping=layer.n_doping, p_doping=layer.p_doping,
@@ -269,17 +278,24 @@ class LayerEditorPanel(widgets.Section):
     def _material_choice(self, layer):
         """Material class dropdown; changing it rebuilds the form so only
         the fractions that material uses are shown."""
-        self._choice_field("Material", getattr(layer, "material", None) or "AlGaN",
-                           ["AlGaN", "InGaN", "InAlGaN"],
-                           on_change=lambda: self.show(self.index))
+        combo = self._choice_field("Material", getattr(layer, "material", None) or "AlGaN",
+                                   list(NITRIDE_KINDS) + list(ZINCBLENDE_KINDS),
+                                   on_change=lambda: self.show(self.index))
+        combo.insertSeparator(len(NITRIDE_KINDS))      # wurtzite nitrides | zincblende arsenides, phosphides
+        combo.setToolTip("Nitrides (wurtzite) above the line, arsenides and phosphides (zincblende) "
+                         "below. A structure uses one family. GaAs is AlGaAs with no Al; "
+                         "InP is InGaP with In = 1.")
 
     def _build_abrupt_form(self, layer: AbruptLayer):
         mat = getattr(layer, "material", None) or "AlGaN"
         self._material_choice(layer)
-        if mat in ("AlGaN", "InAlGaN"):
+        free = free_fractions(mat)
+        if "Al" in free:
             self._field("Al fraction (0-1)", layer.x_Al)
-        if mat in ("InGaN", "InAlGaN"):
+        if "In" in free:
             self._field("In fraction (0-1)", getattr(layer, "x_In", 0.0))
+        if "P" in free:
+            self._field("P fraction (0-1)", getattr(layer, "x_P", 0.0))
         self._field("Thickness (nm)", layer.thickness_nm)
         self._subhead("Doping")
         self._field("n-doping (cm^-3)", layer.n_doping)
@@ -296,12 +312,16 @@ class LayerEditorPanel(widgets.Section):
     def _build_graded_form(self, layer: GradedLayer):
         mat = getattr(layer, "material", None) or "AlGaN"
         self._material_choice(layer)
-        if mat in ("AlGaN", "InAlGaN"):
+        free = free_fractions(mat)
+        if "Al" in free:
             self._field("Al start (0-1)", layer.x_Al_start)
             self._field("Al end (0-1)", layer.x_Al_end)
-        if mat in ("InGaN", "InAlGaN"):
+        if "In" in free:
             self._field("In start (0-1)", getattr(layer, "x_In_start", 0.0))
             self._field("In end (0-1)", getattr(layer, "x_In_end", 0.0))
+        if "P" in free:
+            self._field("P start (0-1)", getattr(layer, "x_P_start", 0.0))
+            self._field("P end (0-1)", getattr(layer, "x_P_end", 0.0))
         self._field("Thickness (nm)", layer.thickness_nm)
         self._choice_field("Profile", layer.profile, ["linear", "parabolic", "stepped", "abrupt"])
         self._field("Steps (if stepped)", layer.n_steps, kind="int")
@@ -448,23 +468,23 @@ class LayerEditorPanel(widgets.Section):
         def getf(label, default=0.0):
             return get(label) if label in self._vars else default
 
-        def adapt(mat, x_al, x_in, default_in=0.1):
+        def adapt(mat, x_al, x_in, x_p, default_in=0.1):
             """Composition for `mat`, converting from whatever the form held
-            (In removed for AlGaN, Al removed for InGaN; a fresh InGaN gets
-            10% In so it is not plain GaN)."""
-            if mat == "AlGaN":
-                return x_al, 0.0
-            if mat == "InGaN":
-                return 0.0, (x_in if x_in > 0 else default_in)
-            return x_al, x_in
+            (fractions the class does not use are dropped or set to its
+            fixed value; a fresh InGaN gets 10% In so it is not plain GaN)."""
+            x_al, x_in, x_p = normalize_composition(mat, x_al, x_in, x_p)
+            if mat == "InGaN" and x_in <= 0:
+                x_in = default_in
+            return x_al, x_in, x_p
 
         try:
             if isinstance(layer, AbruptLayer):
                 mat = getf("Material", "AlGaN")
-                x_al, x_in = adapt(mat, getf("Al fraction (0-1)", layer.x_Al),
-                                   getf("In fraction (0-1)", getattr(layer, "x_In", 0.0)))
+                x_al, x_in, x_p = adapt(mat, getf("Al fraction (0-1)", layer.x_Al),
+                                        getf("In fraction (0-1)", getattr(layer, "x_In", 0.0)),
+                                        getf("P fraction (0-1)", getattr(layer, "x_P", 0.0)))
                 new_layer = AbruptLayer(
-                    x_Al=x_al, x_In=x_in, material=mat,
+                    x_Al=x_al, x_In=x_in, x_P=x_p, material=mat,
                     thickness_nm=get("Thickness (nm)"),
                     n_doping=get("n-doping (cm^-3)"),
                     p_doping=get("p-doping (cm^-3)"),
@@ -475,12 +495,15 @@ class LayerEditorPanel(widgets.Section):
                 )
             elif isinstance(layer, GradedLayer):
                 mat = getf("Material", "AlGaN")
-                a0, i0 = adapt(mat, getf("Al start (0-1)", layer.x_Al_start),
-                               getf("In start (0-1)", getattr(layer, "x_In_start", 0.0)), 0.0)
-                a1, i1 = adapt(mat, getf("Al end (0-1)", layer.x_Al_end),
-                               getf("In end (0-1)", getattr(layer, "x_In_end", 0.0)), 0.1)
+                a0, i0, p0 = adapt(mat, getf("Al start (0-1)", layer.x_Al_start),
+                                   getf("In start (0-1)", getattr(layer, "x_In_start", 0.0)),
+                                   getf("P start (0-1)", getattr(layer, "x_P_start", 0.0)), 0.0)
+                a1, i1, p1 = adapt(mat, getf("Al end (0-1)", layer.x_Al_end),
+                                   getf("In end (0-1)", getattr(layer, "x_In_end", 0.0)),
+                                   getf("P end (0-1)", getattr(layer, "x_P_end", 0.0)), 0.1)
                 new_layer = GradedLayer(
-                    x_Al_start=a0, x_Al_end=a1, x_In_start=i0, x_In_end=i1, material=mat,
+                    x_Al_start=a0, x_Al_end=a1, x_In_start=i0, x_In_end=i1,
+                    x_P_start=p0, x_P_end=p1, material=mat,
                     thickness_nm=get("Thickness (nm)"),
                     n_doping=get("n-doping (cm^-3)"),
                     p_doping=get("p-doping (cm^-3)"),

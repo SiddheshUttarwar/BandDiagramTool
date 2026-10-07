@@ -8,7 +8,7 @@ tightly coupled to each other.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Callable, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from devices.layer import (
     AbruptLayer, GradedLayer, Contact,
@@ -34,6 +34,26 @@ class SolveSettings:
     max_iter: int = 5000
     tol: float = 1e-6
     alpha: float = 0.15
+
+    # Recombination coefficients applied to every layer; None = the
+    # material's own value (physics.materials.alloys.recombination_coefficients).
+    tau_n_ns: Optional[float] = None      # SRH electron lifetime [ns]
+    tau_p_ns: Optional[float] = None      # SRH hole lifetime [ns]
+    B_rad: Optional[float] = None         # radiative coefficient [cm^3/s]
+    C_auger: Optional[float] = None       # Auger coefficient, electrons and holes [cm^6/s]
+
+    def recombination(self) -> Optional[Dict[str, float]]:
+        """The overrides in the form devices.device.AlGaNDevice takes."""
+        out = {}
+        if self.tau_n_ns is not None:
+            out['tau_n'] = self.tau_n_ns * 1e-9
+        if self.tau_p_ns is not None:
+            out['tau_p'] = self.tau_p_ns * 1e-9
+        if self.B_rad is not None:
+            out['B_rad'] = self.B_rad
+        if self.C_auger is not None:
+            out['C_n'] = out['C_p'] = self.C_auger
+        return out or None
 
     # Bias / sweep
     sweep_mode: bool = False

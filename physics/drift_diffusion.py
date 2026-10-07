@@ -83,26 +83,41 @@ class RecombinationComponents:
         return self.R_srh + self.R_rad + self.R_aug
 
 
-def compute_recombination_components(n: np.ndarray, p: np.ndarray, ni: np.ndarray) -> RecombinationComponents:
+# III-nitride defaults: SRH lifetimes [s], radiative coefficient [cm^3/s],
+# Auger coefficients [cm^6/s].
+DEFAULT_RECOMBINATION = {'tau_n': 1e-9, 'tau_p': 1e-9, 'B_rad': 1e-11, 'C_n': 1e-30, 'C_p': 1e-30}
+
+
+def compute_recombination_components(n: np.ndarray, p: np.ndarray, ni: np.ndarray,
+                                     tau_n=None, tau_p=None, B_rad=None,
+                                     C_n=None, C_p=None) -> RecombinationComponents:
     """
     SRH, radiative, and Auger recombination rates [cm^-3 s^-1], each
-    computed separately (see compute_recombination for the combined total
-    this replaces internally -- same coefficients, same standard III-Nitride
-    parameters, factored apart so callers that need the breakdown, e.g. for
-    a recombination-mechanism or optical gain plot, don't have to
-    re-derive it).
+    computed separately -- the same three mechanisms, in the same form, as
+    nextnano++:
+
+        R_SRH = (n p - ni^2) / (tau_p (n + ni) + tau_n (p + ni))
+        R_rad = B (n p - ni^2)
+        R_Aug = (C_n n + C_p p) (n p - ni^2)
+
+    The coefficients are scalars or per-node arrays; any left as None takes
+    its DEFAULT_RECOMBINATION value. Rates are positive for net
+    recombination and negative for net generation (n p < ni^2, e.g. in a
+    reverse-biased depletion region).
     """
-    tau_n = 1e-9  # 1 ns
-    tau_p = 1e-9  # 1 ns
-    B_rad = 1e-11 # cm^3/s
-    C_aug = 1e-30 # cm^6/s
+    d = DEFAULT_RECOMBINATION
+    tau_n = d['tau_n'] if tau_n is None else tau_n
+    tau_p = d['tau_p'] if tau_p is None else tau_p
+    B_rad = d['B_rad'] if B_rad is None else B_rad
+    C_n = d['C_n'] if C_n is None else C_n
+    C_p = d['C_p'] if C_p is None else C_p
 
     np2 = n * p
     ni2 = ni**2
 
     R_srh = (np2 - ni2) / (tau_p * (n + ni) + tau_n * (p + ni))
     R_rad = B_rad * (np2 - ni2)
-    R_aug = C_aug * (n + p) * (np2 - ni2)
+    R_aug = (C_n * n + C_p * p) * (np2 - ni2)
 
     return RecombinationComponents(R_srh=R_srh, R_rad=R_rad, R_aug=R_aug)
 

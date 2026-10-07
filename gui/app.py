@@ -39,13 +39,14 @@ from gui.project_io import save_project, load_project
 
 _POLL_MS = 80
 _DOCS_URL = "https://siddheshuttarwar.github.io/BandDiagramTool/"
-_APP_NAME = "BandDiagramTool"
+_APP_NAME = "EpiBand"
 
 # (figure name in PlotPanel, toolbar text, menu text)
 _FIGURES = [
     ("Band Diagram", "Bands", "Band Diagram"),
     ("Wavefunctions", "Wavefunctions", "Wavefunctions"),
     ("Carriers", "Carriers", "Carrier Density"),
+    ("Recombination", "Recombination", "Recombination Rates"),
     ("Fields", "Field", "Electric Field"),
     ("Polarization", "Polarization", "Polarization"),
     ("Strain", "Strain", "Strain"),
@@ -126,8 +127,9 @@ class App(QtWidgets.QMainWindow):
             act.setIconText(short)
             act.setCheckable(True)
             act.setChecked(i == 0)
-            act.setShortcut(QtGui.QKeySequence(f"Ctrl+{i + 1}"))
-            act.setToolTip(f"{long} (Ctrl+{i + 1})")
+            key = f"Ctrl+{(i + 1) % 10}"          # the tenth figure is Ctrl+0
+            act.setShortcut(QtGui.QKeySequence(key))
+            act.setToolTip(f"{long} ({key})")
             act.setStatusTip(f"Show the {long.lower()} figure")
             act.triggered.connect(lambda _checked=False, n=name: self.plot_panel.show_tab(n))
             self._figure_group.addAction(act)
@@ -353,7 +355,8 @@ class App(QtWidgets.QMainWindow):
             device = AlGaNDevice(layers=list(self.model.layers), contacts=list(self.model.contacts),
                                  T=f["T_growth_C"] + 273.15, dx_nm=s.dx_nm,
                                  include_spontaneous_polarization=s.include_spontaneous_polarization,
-                                 polarity=s.polarity, polarization_model=s.polarization_model)
+                                 polarity=s.polarity, polarization_model=s.polarization_model,
+                                 recombination=s.recombination())
             result = solve_illuminated(device, wavelength_nm=f["wavelength_nm"], power_W_cm2=f["power_W_cm2"],
                                        above_gap_cm=f["absorption_cm"], log_fn=self.plot_panel.append_log)
         except Exception as exc:  # noqa: BLE001
@@ -434,6 +437,7 @@ class App(QtWidgets.QMainWindow):
             T=s.T, dx_nm=s.dx_nm,
             include_spontaneous_polarization=s.include_spontaneous_polarization,
             polarity=s.polarity, polarization_model=s.polarization_model,
+            recombination=s.recombination(),
             quantum=s.quantum,
             flat_qfl=s.flat_qfl,
             n_states_e=s.n_states_e, n_states_h=s.n_states_h,
@@ -521,7 +525,8 @@ class App(QtWidgets.QMainWindow):
         box.setText(
             f"<b>{_APP_NAME}</b><br><br>"
             "One-dimensional Schrödinger–Poisson and drift-diffusion solver<br>"
-            "for wurtzite III-nitride heterostructures.<br><br>"
+            "for III-V heterostructures: wurtzite nitrides and<br>"
+            "zincblende arsenides and phosphides.<br><br>"
             f"Model reference and validation:<br><a href='{_DOCS_URL}'>{_DOCS_URL}</a>")
         box.exec()
 
@@ -568,7 +573,7 @@ class App(QtWidgets.QMainWindow):
 
     def _open_project(self):
         path, _filter = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Open", "", "BandDiagramTool project (*.json)")
+            self, "Open", "", "EpiBand project (*.json)")
         if path:
             self._load_path(path)
 
@@ -585,7 +590,7 @@ class App(QtWidgets.QMainWindow):
 
     def _save_project_as(self):
         path, _filter = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save As", "", "BandDiagramTool project (*.json)")
+            self, "Save As", "", "EpiBand project (*.json)")
         if not path:
             return
         if not path.lower().endswith(".json"):

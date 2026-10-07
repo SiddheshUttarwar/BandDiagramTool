@@ -2,9 +2,9 @@
 # PyInstaller recipe for the Windows program.
 #
 #     pip install pyinstaller
-#     pyinstaller --noconfirm BandDiagramTool.spec
+#     pyinstaller --noconfirm EpiBand.spec
 #
-# Output: dist/BandDiagramTool/BandDiagramTool.exe, in a folder with its
+# Output: dist/EpiBand/EpiBand.exe, in a folder with its
 # libraries (start-up is much faster than a single-file .exe, which unpacks
 # itself on every launch). Zip that folder to distribute it.
 import os
@@ -13,7 +13,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 # the application icon, drawn by the program itself
 os.makedirs('build', exist_ok=True)
-ICON = os.path.join('build', 'BandDiagramTool.ico')
+ICON = os.path.join('build', 'EpiBand.ico')
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PyQt6 import QtGui, QtWidgets  # noqa: E402
 _app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -48,7 +48,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='BandDiagramTool',
+    name='EpiBand',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -63,5 +63,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='BandDiagramTool',
+    name='EpiBand',
 )

@@ -1,5 +1,7 @@
 """
-AlGaNDevice: user-facing class for AlGaN heterostructure simulation.
+AlGaNDevice: user-facing class for heterostructure simulation -- wurtzite
+nitrides (the original scope, hence the name) and zincblende arsenides /
+phosphides. `Device` is the same class under a material-neutral name.
 
 Usage example:
     from devices.layer import AbruptLayer, GradedLayer, Contact
@@ -33,11 +35,12 @@ from physics.self_consistent import solve_self_consistent, SolverResult
 
 class AlGaNDevice:
     """
-    AlxGa(1-x)N heterostructure device simulator.
+    III-V heterostructure device simulator.
 
     The device is defined entirely by an ordered list of layers (bottom → top,
-    i.e. substrate side first) and two metal contacts.  All layers are AlGaN
-    with x_Al ∈ [0, 1]; x_Al = 0 is GaN, x_Al = 1 is AlN.
+    i.e. substrate side first) and two metal contacts. The layers are all
+    wurtzite nitrides (AlGaN, InGaN, InAlGaN) or all zincblende arsenides /
+    phosphides (AlGaAs, InGaAs, InGaP, InGaAsP, ...) -- see devices.layer.
 
     Parameters
     ----------
@@ -57,6 +60,7 @@ class AlGaNDevice:
         include_strain_band_shift: bool = True,
         polarity: str = 'metal',
         polarization_model: str = 'ambacher2002',
+        recombination: Optional[dict] = None,
     ) -> None:
         self.layers   = layers
         self.contacts = contacts
@@ -66,6 +70,9 @@ class AlGaNDevice:
         self.include_strain_band_shift = include_strain_band_shift
         self.polarity = polarity                      # 'metal' | 'N'
         self.polarization_model = polarization_model  # 'ambacher2002' | 'dreyer2016'
+        # Optional overrides of the material recombination coefficients:
+        # {'tau_n', 'tau_p' [s], 'B_rad' [cm^3/s], 'C_n', 'C_p' [cm^6/s]}
+        self.recombination = recombination
         self._grid: Optional[GridData] = None
         self.last_sweep_failed_voltages: List[float] = []
 
@@ -81,6 +88,7 @@ class AlGaNDevice:
             include_strain_band_shift=self.include_strain_band_shift,
             polarity=self.polarity,
             polarization_model=self.polarization_model,
+            recombination=self.recombination,
         )
         return self._grid
 
@@ -296,3 +304,7 @@ class AlGaNDevice:
         total_nm = self.total_thickness_nm
         return (f"AlGaNDevice({n_layers} layers, "
                 f"{total_nm:.1f} nm total, T={self.T} K)")
+
+
+# Material-neutral name for the same class.
+Device = AlGaNDevice

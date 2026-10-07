@@ -21,6 +21,7 @@ const SRC = path.join(__dirname, '..', 'math');
 const OUT = path.join(__dirname, '..');
 const SITE_TITLE = 'EpiBand model reference';
 const REPO = 'https://github.com/SiddheshUttarwar/BandDiagramTool';
+const DOWNLOAD = REPO + '/releases/latest/download/EpiBand-windows.zip';
 
 const adaptor = liteAdaptor();
 RegisterHTMLHandler(adaptor);
@@ -138,7 +139,7 @@ ${next ? `<a class="next" href="${next.out}"><span>Next</span>${esc(next.title)}
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">EpiBand <span>model reference</span></a>
-  <a class="repo" href="${REPO}">GitHub</a>
+  <nav class="links"><a class="download" href="${DOWNLOAD}">Download for Windows</a><a class="repo" href="${REPO}">GitHub</a></nav>
 </header>
 <div class="layout">
 <aside class="side">

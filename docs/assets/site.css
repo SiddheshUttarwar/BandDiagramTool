@@ -54,6 +54,8 @@ a:hover { text-decoration-thickness: 2px; }
 .brand { font-weight: 650; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
 .brand span { font-weight: 400; color: var(--muted); margin-left: 6px; }
 .repo { font-size: 14px; }
+.links { display: flex; align-items: center; gap: 16px; }
+.download { font-size: 14px; font-weight: 600; white-space: nowrap; }
 
 /* layout */
 .layout { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); }
@@ -162,6 +164,12 @@ footer { margin-top: 2rem; font-size: 13.5px; color: var(--muted); }
   .top, .side, .pager, .skip { display: none; }
   .layout { display: block; }
   main { padding: 0; }
+}
+
+/* narrow screens: keep the header on one line */
+@media (max-width: 600px) {
+  .brand span { display: none; }
+  .links { gap: 12px; }
 }
 
 /* MathJax SVG output */

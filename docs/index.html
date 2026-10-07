@@ -11,14 +11,14 @@
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">EpiBand <span>model reference</span></a>
-  <a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a>
+  <nav class="links"><a class="download" href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip">Download for Windows</a><a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a></nav>
 </header>
 <div class="layout">
 <aside class="side">
   <details class="navbox" open>
     <summary>Chapters</summary>
     <ol class="nav">
-<li class="current"><a href="index.html" aria-current="page"><span class="n"></span>Overview</a><ul class="sub"><li><a href="#chapters">Chapters</a></li><li><a href="#program-flow">Program flow</a></li><li><a href="#unknowns-and-the-equations-that-determine-them">Unknowns and the equations that determine them</a></li><li><a href="#solve-modes">Solve modes</a></li><li><a href="#conventions">Conventions</a></li><li><a href="#source-files">Source files</a></li></ul></li>
+<li class="current"><a href="index.html" aria-current="page"><span class="n"></span>Overview</a><ul class="sub"><li><a href="#download">Download</a></li><li><a href="#this-reference">This reference</a></li><li><a href="#chapters">Chapters</a></li><li><a href="#program-flow">Program flow</a></li><li><a href="#unknowns-and-the-equations-that-determine-them">Unknowns and the equations that determine them</a></li><li><a href="#solve-modes">Solve modes</a></li><li><a href="#conventions">Conventions</a></li><li><a href="#source-files">Source files</a></li></ul></li>
 <li><a href="01_structure_and_grid.html"><span class="n">1</span>Structure and grid</a></li>
 <li><a href="02_materials.html"><span class="n">2</span>Materials</a></li>
 <li><a href="03_strain.html"><span class="n">3</span>Strain</a></li>
@@ -46,6 +46,10 @@ Al-In-Ga-N grown along the c-axis, and zincblende arsenides and phosphides of Al
 along [001]. This reference states the equations it solves, the parameters that enter them, and
 the algorithms that couple them. Chapters 2 to 4 give the material model of the nitrides and
 chapter 15 that of the arsenides and phosphides; all other chapters apply to both.</p>
+<h2 id="download"><a class="anchor" href="#download" aria-label="Link to this section">#</a>Download</h2>
+<p><strong><a href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip">Download EpiBand-windows.zip</a></strong> (about 97 MB, 64-bit Windows 10 or 11). No Python and no installation needed: extract the zip, open the <code>EpiBand</code> folder and run <code>EpiBand.exe</code>, keeping the <code>_internal</code> folder beside it. Start with <strong>File ▸ New from Template</strong>. The program is not code-signed, so Windows may show &quot;Windows protected your PC&quot; the first time: choose <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+<p>The source code, the command line and the Python interface are on <a href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a>.</p>
+<h2 id="this-reference"><a class="anchor" href="#this-reference" aria-label="Link to this section">#</a>This reference</h2>
 <p>It is organised by physical model, in the same order the program evaluates them. Equations are
 numbered by chapter, so <a class="eqref" href="05_electrostatics.html#eq-5-4">(5.4)</a> is the fourth equation of chapter 5.</p>
 <h2 id="chapters"><a class="anchor" href="#chapters" aria-label="Link to this section">#</a>Chapters</h2>

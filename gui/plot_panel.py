@@ -531,6 +531,7 @@ class PlotPanel(QtWidgets.QWidget):
         if len(f):
             k = int(np.argmax(f))
             put("Peak field", f"{f[k]:.3f} MV/cm at z = {float(r.x_nm[k]):.2f} nm")
+        lines += self._built_in_lines(r)
 
         rec = recombination_currents(r)
         # a unipolar device has rates of order 1e-30: numerical zeros, not worth a block
@@ -607,6 +608,54 @@ class PlotPanel(QtWidgets.QWidget):
         if self._light_bands is not None:
             lines = self._light_band_lines() + [""] + lines
         self.summary_widget.setPlainText("\n".join(lines))
+
+    @staticmethod
+    def _built_in_lines(r) -> list:
+        """The built-in voltage and how it follows from the two contacts.
+
+        Equilibrium, E_F = 0, phi = 0 at the bottom contact (devices.grid_builder):
+        Ec - E_F is Ec0[0] at the bottom and Ec0[-1] + V_bi at the top, and
+        V_bi = (W_top - W_bottom)/q with W = chi + (Ec - E_F).
+        """
+        v_bi = float(getattr(r, "V_bi", float("nan")))
+        chi = getattr(r, "chi", None)
+        ec0, ev0 = np.asarray(r.Ec0, dtype=float), np.asarray(r.Ev0, dtype=float)
+        if not np.isfinite(v_bi) or chi is None or len(chi) == 0 or len(ec0) == 0:
+            return []
+        chi = np.asarray(chi, dtype=float)
+        nd, na = np.asarray(r.ND, dtype=float), np.asarray(r.NA, dtype=float)
+        kinds = getattr(r, "contact_types", ("ohmic", "ohmic"))
+        sides = []
+        for i, d_ef, kind in ((0, float(ec0[0]), kinds[0]), (-1, float(ec0[-1]) + v_bi, kinds[1])):
+            net = (float(nd[i]) if len(nd) else 0.0) - (float(na[i]) if len(na) else 0.0)
+            doping = (f"n {net:.2e} cm^-3" if net > 0 else f"p {-net:.2e} cm^-3" if net < 0
+                      else "undoped")
+            sides.append(dict(kind=kind, doping=doping, chi=float(chi[i]), eg=float(ec0[i] - ev0[i]),
+                              d_ef=d_ef, w=float(chi[i]) + d_ef))
+        bot, top = sides
+
+        def row(key, a, b):
+            return f"  {key:<26}{a:<24}{b}"
+
+        out = ["", "BUILT-IN VOLTAGE   W = chi + (Ec - E_F) at each contact, at equilibrium",
+               row("", "bottom contact", "top contact"),
+               row("Contact", bot["kind"], top["kind"]),
+               row("Doping (net)", bot["doping"], top["doping"]),
+               row("Band gap", f"{bot['eg']:.4f} eV", f"{top['eg']:.4f} eV"),
+               row("Electron affinity chi", f"{bot['chi']:.4f} eV", f"{top['chi']:.4f} eV"),
+               row("Ec - E_F" , f"{bot['d_ef']:+.4f} eV" + (" (barrier)" if bot["kind"] == "schottky" else ""),
+                   f"{top['d_ef']:+.4f} eV" + (" (barrier)" if top["kind"] == "schottky" else "")),
+               row("Work function W", f"{bot['w']:.4f} eV", f"{top['w']:.4f} eV"),
+               row("Built-in voltage V_bi", f"(W_top - W_bottom)/q = {top['w']:.4f} - {bot['w']:.4f} "
+                   f"= {v_bi:+.4f} V", "")]
+        v_int = float(getattr(r, "V_internal", r.V_applied))
+        if abs(v_int) > 1e-9:
+            out.append(f"  {'Drop left across device':<26}V_bi - V = {v_bi:+.4f} - ({v_int:+.4f}) "
+                       f"= {v_bi - v_int:+.4f} V")
+        out.append("      Positive V_bi: forward bias is positive on the top contact.")
+        if getattr(r, "crystal", "wurtzite") == "wurtzite":
+            out.append("      Polarization charge still bends the bands inside, so they are not flat at V = V_bi.")
+        return out
 
     def _update_zoom_choices(self, layers: Optional[list],
                               qw_range_nm: Optional[Tuple[float, float]] = None):

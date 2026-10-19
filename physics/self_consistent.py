@@ -560,6 +560,13 @@ class SolverResult:
     ND: np.ndarray  = field(default_factory=lambda: np.array([]))
     NA: np.ndarray  = field(default_factory=lambda: np.array([]))
 
+    # Built-in voltage, in the applied-bias convention: the bias at which the
+    # contact-to-contact electrostatic drop vanishes, V_bi = phi_bottom_eq -
+    # phi_top_eq = (W_top - W_bottom)/q with W = chi + (Ec - E_F) at each
+    # contact. contact_types = (bottom, top), 'ohmic' or 'schottky'.
+    V_bi: float = float('nan')
+    contact_types: tuple = ('ohmic', 'ohmic')
+
 
 def _mobility_profiles(g: GridData):
     """Per-node low-field mobilities [cm^2/Vs] from the grid (see
@@ -2054,4 +2061,6 @@ def solve_self_consistent(
         interface_sigmas=g.interface_sigmas,
         residual_history=residual_history, alpha_history=alpha_history,
         Ec0=g.Ec0, Ev0=g.Ev0, ND=g.ND, NA=g.NA,
+        V_bi=float(g.phi_bottom_eq - g.phi_top_eq),
+        contact_types=(g.bottom_contact.contact_type, g.top_contact.contact_type),
     )

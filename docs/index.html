@@ -11,7 +11,7 @@
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">EpiBand <span>model reference</span></a>
-  <nav class="links"><a class="download" href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip">Download for Windows</a><a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a></nav>
+  <nav class="links"><a class="download" href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest">Download (Windows, macOS)</a><a class="repo" href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a></nav>
 </header>
 <div class="layout">
 <aside class="side">
@@ -47,7 +47,37 @@ along [001]. This reference states the equations it solves, the parameters that 
 the algorithms that couple them. Chapters 2 to 4 give the material model of the nitrides and
 chapter 15 that of the arsenides and phosphides; all other chapters apply to both.</p>
 <h2 id="download"><a class="anchor" href="#download" aria-label="Link to this section">#</a>Download</h2>
-<p><strong><a href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip">Download EpiBand-windows.zip</a></strong> (about 97 MB, 64-bit Windows 10 or 11). No Python and no installation needed: extract the zip, open the <code>EpiBand</code> folder and run <code>EpiBand.exe</code>, keeping the <code>_internal</code> folder beside it. Start with <strong>File ▸ New from Template</strong>. The program is not code-signed, so Windows may show &quot;Windows protected your PC&quot; the first time: choose <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+<p>No Python and no installation needed.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>System</th>
+<th>Download</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows 10 or 11 (64-bit)</td>
+<td><strong><a href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip">EpiBand-windows.zip</a></strong></td>
+</tr>
+<tr>
+<td>macOS, Apple Silicon (M1-M4)</td>
+<td><strong><a href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-macos-arm64.zip">EpiBand-macos-arm64.zip</a></strong></td>
+</tr>
+<tr>
+<td>macOS, Intel</td>
+<td><strong><a href="https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-macos-intel.zip">EpiBand-macos-intel.zip</a></strong></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Windows:</strong> extract the zip, open the <code>EpiBand</code> folder and run <code>EpiBand.exe</code>, keeping the
+<code>_internal</code> folder beside it. If Windows shows &quot;Windows protected your PC&quot;, choose <strong>More info</strong>,
+then <strong>Run anyway</strong>.</p>
+<p><strong>macOS:</strong> unzip and move <code>EpiBand.app</code> to Applications. The app is not notarized by Apple: the
+first time, right-click it and choose <strong>Open</strong> (on macOS 15, try to open it once, then <strong>System
+Settings ▸ Privacy &amp; Security ▸ Open Anyway</strong>). If macOS reports the app as damaged, run once in
+Terminal: <code>xattr -dr com.apple.quarantine /Applications/EpiBand.app</code>.</p>
+<p>Start with <strong>File ▸ New from Template</strong>.</p>
 <p>The source code, the command line and the Python interface are on <a href="https://github.com/SiddheshUttarwar/BandDiagramTool">GitHub</a>.</p>
 <h2 id="this-reference"><a class="anchor" href="#this-reference" aria-label="Link to this section">#</a>This reference</h2>
 <p>It is organised by physical model, in the same order the program evaluates them. Equations are

@@ -19,26 +19,32 @@ illumination.
 electron gas at the upper GaN/AlN interface, with the hole gas at the lower one removed by the
 Si δ-doping.*
 
-## Download for Windows
+## Download
 
-**[Download EpiBand-windows.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip)** (about 97 MB)
+No Python and no installation needed.
 
-No Python and no installation needed:
+| System | Download |
+|---|---|
+| Windows 10 or 11 (64-bit) | **[EpiBand-windows.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-windows.zip)** |
+| macOS, Apple Silicon (M1-M4) | **[EpiBand-macos-arm64.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-macos-arm64.zip)** |
+| macOS, Intel | **[EpiBand-macos-intel.zip](https://github.com/SiddheshUttarwar/BandDiagramTool/releases/latest/download/EpiBand-macos-intel.zip)** |
 
-1. Download the zip and extract it anywhere.
-2. Open the `EpiBand` folder and run `EpiBand.exe`. Keep the `_internal` folder
-   beside it.
-3. Start with **File ▸ New from Template**.
+**Windows:** extract the zip, open the `EpiBand` folder and run `EpiBand.exe`, keeping the
+`_internal` folder beside it. The program is not code-signed, so Windows may show "Windows
+protected your PC" the first time: choose **More info**, then **Run anyway**.
 
-For 64-bit Windows 10 or 11. The program is not code-signed, so Windows may show "Windows
-protected your PC" the first time: choose **More info**, then **Run anyway**. Solved results are
-written as CSV to a `results` folder beside the `.exe`. Everything under
-[Using the GUI](#using-the-gui) applies; the command-line scripts and the Python API need the
-source install below.
+**macOS:** unzip, move `EpiBand.app` to Applications. The app is not notarized by Apple: the
+first time, right-click it and choose **Open** (on macOS 15, try to open it once, then
+**System Settings ▸ Privacy & Security ▸ Open Anyway**). If macOS reports the app as damaged,
+run once in Terminal: `xattr -dr com.apple.quarantine /Applications/EpiBand.app`.
+
+Start with **File ▸ New from Template**. Solved results are written as CSV to a `results`
+folder. Everything under [Using the GUI](#using-the-gui) applies; the command-line scripts and
+the Python API need the source install below.
 
 ## Contents
 
-- [Download for Windows](#download-for-windows)
+- [Download](#download)
 - [The mathematics](#the-mathematics)
 - [What it is, and what it is not](#what-it-is-and-what-it-is-not)
 - [Install](#install)

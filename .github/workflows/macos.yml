@@ -28,7 +28,7 @@ jobs:
         include:
           - runner: macos-14        # Apple Silicon (arm64)
             arch: arm64
-          - runner: macos-13        # Intel (x86_64)
+          - runner: macos-15-intel  # Intel (x86_64)
             arch: intel
     runs-on: ${{ matrix.runner }}
     steps:
@@ -44,7 +44,7 @@ jobs:
           pip install -r requirements.txt pyinstaller pillow
 
       - name: Build EpiBand.app
-        run: pyinstaller --noconfirm EpiBand.spec
+        run: python -m PyInstaller --noconfirm EpiBand.spec
 
       - name: Self-test the built app (solves the HEMT template)
         env:

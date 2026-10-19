@@ -12,6 +12,10 @@
 import os
 import sys
 
+# the repository root, so the recipe can import the program's own modules
+# however PyInstaller was started (SPECPATH: the folder of this file)
+sys.path.insert(0, os.path.abspath(SPECPATH))  # noqa: F821
+
 from PyInstaller.utils.hooks import collect_data_files
 
 # the application icon, drawn by the program itself

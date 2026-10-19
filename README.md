@@ -65,7 +65,7 @@ and the validation results, one chapter per topic:
 | [3. Strain](https://siddheshuttarwar.github.io/BandDiagramTool/03_strain.html) | biaxial strain, deformation potentials, valence-band splitting |
 | [4. Polarization](https://siddheshuttarwar.github.io/BandDiagramTool/04_polarization.html) | spontaneous and piezoelectric polarization, interface charge, polarity |
 | [5. Electrostatics](https://siddheshuttarwar.github.io/BandDiagramTool/05_electrostatics.html) | Poisson's equation, carrier statistics, contacts and surface barriers |
-| [6. Quantum mechanics](https://siddheshuttarwar.github.io/BandDiagramTool/06_quantum.html) | the Schrödinger equation and subband densities |
+| [6. Quantum mechanics](https://siddheshuttarwar.github.io/BandDiagramTool/06_quantum.html) | the 8-band k·p Hamiltonian and the quantum densities |
 | [7. Currents](https://siddheshuttarwar.github.io/BandDiagramTool/07_currents.html) | drift-diffusion, recombination, current conservation |
 | [8. Optics](https://siddheshuttarwar.github.io/BandDiagramTool/08_optics.html) | transition energies, overlap, the Stark effect, gain |
 | [9. Solution algorithms](https://siddheshuttarwar.github.io/BandDiagramTool/09_solution_algorithms.html) | how the coupled equations are solved |
@@ -82,12 +82,13 @@ and the validation results, one chapter per topic:
 It is a small, readable tool whose physics is documented equation by equation. For the nitrides
 its accuracy has been measured against 102 published experiments. The arsenide and phosphide
 model uses the standard Vurgaftman parameter set and has been compared with 25 papers on lasers,
-LEDs, quantum wells, intersubband detectors, band offsets and bulk alloys (9.0 / 10; see
+LEDs, quantum wells, intersubband detectors, band offsets and bulk alloys (9.4 / 10; see
 [chapter 15](https://siddheshuttarwar.github.io/BandDiagramTool/14a_zincblende_materials.html)).
 That benchmark is smaller and has almost no transport data.
 
 It is not a replacement for a general device simulator. It is one-dimensional, one growth
-orientation per family (c-plane wurtzite, (001) zincblende), single-band (no k·p), and its
+orientation per family (c-plane wurtzite, (001) zincblende), 8-band k·p for Γ electrons and holes
+(X and L valleys single-band), and its
 transport model is plain drift-diffusion without tunnelling. The
 [limits chapter](https://siddheshuttarwar.github.io/BandDiagramTool/11_limits_and_comparison.html)
 lists what is left out.
@@ -506,10 +507,10 @@ for layer in out.layers:
 | Check | Result |
 |---|---|
 | Numerics against nextnano++ (12 structures, same parameters) | sheet densities within 3%; band edges within about 10 meV where the comparison grid resolves the structure |
-| 102 published experiments, 153 measured values, default settings, nothing tuned per paper | 7.2 / 10 overall |
+| 102 published experiments, 153 measured values, default settings, nothing tuned per paper | 7.3 / 10 overall (8-band k·p; intersubband energies within 15 meV for wells of 2 nm and more) |
 | Electron-gas sheet density (56 values) | median 20% above measurement; 57% within 30%, 86% within a factor of two |
 | Dopant levels, polarization charge, hole gases | within 20% or 50 meV |
-| Arsenides and phosphides: 25 published experiments, 38 measured values (lasers, LEDs, quantum wells, intersubband detectors, offsets, bulk alloys) | 9.0 / 10; median energy error 20 meV; one electron-gas value, no bias data |
+| Arsenides and phosphides: 25 published experiments, 38 measured values (lasers, LEDs, quantum wells, intersubband detectors, offsets, bulk alloys) | 9.4 / 10 with 8-band k·p (9.0 single-band); median energy error 18 meV; one electron-gas value, no bias data |
 | Weakest areas | band offsets involving InN; emission energy of monolayer wells and of LEDs under injection; forward prediction for barriers thinner than about 4 nm |
 
 The [validation chapter](https://siddheshuttarwar.github.io/BandDiagramTool/10_validation.html)

@@ -83,12 +83,12 @@
 </tr>
 <tr>
 <td>Surfaces</td>
-<td>fixed barrier, or user-defined trap states</td>
-<td>5</td>
+<td>fixed barrier, or user-defined trap states; under light a recombination velocity</td>
+<td>5, 13</td>
 </tr>
 <tr>
 <td>Quantum</td>
-<td>single-band envelope functions, three decoupled valence bands, Hartree</td>
+<td>8-band k·p (Γ conduction + three valence bands, both spins), in-plane k integrated; X/L valleys single-band; Hartree</td>
 <td>6</td>
 </tr>
 <tr>
@@ -98,7 +98,7 @@
 </tr>
 <tr>
 <td>Optics</td>
-<td>band-to-band transitions; band-edge gain</td>
+<td>band-to-band transitions; k·p gain, TE and TM</td>
 <td>8</td>
 </tr>
 </tbody>
@@ -216,12 +216,12 @@ the nextnano++ model reference.</p>
 <tr>
 <td>Quantum model</td>
 <td>single-band and multi-band k·p (6- and 8-band)</td>
-<td>single-band, <a class="eqref" href="06_quantum.html#eq-6-1">(6.1)</a></td>
+<td>8-band k·p <a class="eqref" href="06_quantum.html#eq-6-1">(6.1)</a>; X, L valleys single-band</td>
 </tr>
 <tr>
 <td>Quantum density</td>
 <td>analytic for single-band; k-space integration for k·p</td>
-<td>analytic, <a class="eqref" href="06_quantum.html#eq-6-6">(6.6)</a>-<a class="eqref" href="06_quantum.html#eq-6-8">(6.8)</a></td>
+<td>k-space integration <a class="eqref" href="06_quantum.html#eq-6-4">(6.4)</a>-<a class="eqref" href="06_quantum.html#eq-6-5">(6.5)</a></td>
 </tr>
 <tr>
 <td>Current model</td>
@@ -246,15 +246,14 @@ the nextnano++ model reference.</p>
 <tr>
 <td>Optical spectra</td>
 <td>semiclassical spectra; k·p absorption and gain; excitons</td>
-<td>transition energies and overlap; band-edge gain <a class="eqref" href="08_optics.html#eq-8-4">(8.4)</a></td>
+<td>transition energies and overlap; k·p gain, TE and TM <a class="eqref" href="08_optics.html#eq-8-4">(8.4)</a></td>
 </tr>
 </tbody>
 </table></div>
-<p><strong>Where the two give the same answer.</strong> Band diagrams, sheet densities and single-band subband
-energies of c-plane nitride layer stacks, when the same parameters are used.</p>
-<p><strong>Where nextnano++ should be preferred.</strong> Anything needing valence-band mixing (polarization of
-emission, accurate hole subbands, gain magnitude), crystal orientations other than c-plane,
-lateral geometry, or materials outside Al-In-Ga-N.</p>
+<p><strong>Where the two give the same answer.</strong> Band diagrams, sheet densities and subband energies of
+c-plane nitride layer stacks, when the same parameters are used.</p>
+<p><strong>Where nextnano++ should be preferred.</strong> Crystal orientations other than c-plane, lateral
+geometry, excitonic spectra, or materials outside the families of chapters 2 and 15.</p>
 <p><strong>What this tool adds.</strong> Composition-dependent Si and Mg ionization energies for the nitrides
 built in; polarization charge that is exactly conservative on non-uniform grids; a fully coupled
 drift-diffusion Newton solver with a current-conservation diagnostic; a choice of two

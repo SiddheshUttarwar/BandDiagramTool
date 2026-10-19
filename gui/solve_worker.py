@@ -1,13 +1,13 @@
 """
-Background solve execution so the Tkinter main loop never blocks.
+Background solve execution so the Qt event loop never blocks.
 
 Only one solve is ever in flight; if a new request arrives while busy, it
 replaces any pending request and is picked up as soon as the current solve
 finishes ("latest request wins" coalescing) -- this is what makes debounced
-live-re-solve safe without ever touching Tk widgets off the main thread.
+live-re-solve safe without ever touching Qt widgets off the main thread.
 
-Consumers must poll `poll()` from the Tk main thread (e.g. via
-`root.after`) to receive results/errors/log lines.
+Consumers must poll `poll()` from the GUI (main) thread (e.g. via
+a `QTimer`, as gui.app does) to receive results/errors/log lines.
 """
 
 from __future__ import annotations

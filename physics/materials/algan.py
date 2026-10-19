@@ -256,7 +256,14 @@ class AlGaNParams:
 #   1.63/0.27/0.65 isotropic (NSM/Ioffe), Delta_cr 0.040, Delta_so 0.005,
 #   a 3.545, c 5.703 A, C13/C33 92/224 GPa, e31/e33 -0.57/0.97 C/m^2
 #   (Bernardini 1997 / V&M), Psp -0.042 C/m^2 (Ambacher 2002),
-#   a1 = a2 = -3.5 eV, D1..D4 = -3.7, 4.5, 8.2, -4.1 eV (V&M 2003).
+#   D1, D2 = -3.7, 4.5 eV (V&M 2003, = GaN). Interband potentials
+#   a1 = a_cz - D1 = -3.64, a2 = a_ct - D2 = -4.58 and D3, D4 = 2.68, -1.78 eV
+#   from the hybrid-functional set of Yan et al., PRB 90, 125118 (2014),
+#   Table III (changed 2026-10-08). V&M's InN entry pairs a1 = a2 = -3.5
+#   with GaN's D3/D4 (8.2/-4.1), which is not a consistent set: the gap
+#   then CLOSES under biaxial compression by ~0.11 eV per 1 % and InN
+#   strained to GaN (-10 %) came out with Eg = -0.40 eV. With the Yan set
+#   the gap of compressed InN stays near its relaxed value.
 # ---------------------------------------------------------------------------
 _BIN = {
     #            GaN        AlN        InN
@@ -280,10 +287,10 @@ _BIN = {
     'so_pp':   ((0.15, 1.1),  (0.25, 3.81),  (0.65, 0.65)),
     'D1':      (-3.7,     -17.1,     -3.7),
     'D2':      (4.5,       7.9,       4.5),
-    'D3':      (8.2,       8.8,       8.2),
-    'D4':      (-4.1,     -3.9,      -4.1),
-    'a1':      (-4.9,     -3.4,      -3.5),
-    'a2':      (-11.3,    -11.8,     -3.5),
+    'D3':      (8.2,       8.8,       2.68),
+    'D4':      (-4.1,     -3.9,      -1.78),
+    'a1':      (-4.9,     -3.4,      -3.64),
+    'a2':      (-11.3,    -11.8,     -4.58),
     'p_pyro':  (6.0e-5,    4.5e-5,    6.0e-5),   # InN: GaN value (no data)
     # Varshni parameters (Vurgaftman & Meyer 2003): Eg(T) = Eg(0) - alpha T^2 / (T + beta)
     'varshni_alpha': (0.909e-3, 1.799e-3, 0.245e-3),   # [eV/K]
@@ -320,12 +327,22 @@ _B_EG_INGA = 1.4
 # GaN, but XPS measures only 0.15-0.2 (+/-0.3) eV with dEc ~0.9-1.0 eV
 # (Akazawa et al., APL 96, 132104 (2010); angle-resolved XPS 0.15 eV).
 # b = 2.6 eV reproduces dEv = 0.2 eV there. Zero for AlGaN and InGaN.
+# It is given the composition dependence of the gap bowing (_b_ev_alin):
+# a constant 2.6 eV, fitted at 17 % In only, put the valence band of
+# In-rich AlInN (60-95 % In) up to 0.14 eV ABOVE that of InN itself, so
+# the band edge was not monotonic towards the InN endpoint.
 _B_EV_ALIN = 2.6
+_U_EV_ALIN = 0.17     # In fraction at which _B_EV_ALIN was fitted
 
 
 def _b_eg_alin(x_Al, x_In):
     u = x_In / (x_Al + x_In) if (x_Al + x_In) > 0 else 0.0
     return 6.43 / (1.0 + 1.21 * u * u)
+
+
+def _b_ev_alin(x_Al, x_In):
+    u = x_In / (x_Al + x_In) if (x_Al + x_In) > 0 else 0.0
+    return _B_EV_ALIN * (1.0 + 1.21 * _U_EV_ALIN ** 2) / (1.0 + 1.21 * u * u)
 
 
 def _check_comp(x_Al, x_In):
@@ -421,7 +438,7 @@ def get_nitride_params(x_Al: float, x_In: float = 0.0) -> AlGaNParams:
     # bowing): AlN 0.80 eV below GaN (V&M 2003), InN 0.58 eV above (King
     # 2008). chi is derived from Ec with the NSM GaN anchor chi(GaN) = 4.1.
     chi_GaN = 4.1
-    Ev_top = -(chi_GaN + _BIN['Eg'][0]) + L('Ev_off') + _B_EV_ALIN * x * y
+    Ev_top = -(chi_GaN + _BIN['Eg'][0]) + L('Ev_off') + _b_ev_alin(x, y) * x * y
     chi = -(Ev_top + Eg)
 
     eps_r = L('eps_r')

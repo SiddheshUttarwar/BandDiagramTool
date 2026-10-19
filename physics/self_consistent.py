@@ -58,17 +58,15 @@ from typing import Callable, Optional
 from devices.grid_builder import GridData
 from physics.fermi_dirac import (
     electron_density, hole_density,
-    quantum_electron_density, quantum_hole_density,
 )
 from physics.poisson import (
     solve_poisson, solve_poisson_newton, solve_poisson_newton_ptc,
     electric_field, _assemble_laplacian,
 )
-from physics.schrodinger import solve_schrodinger, hole_potential
 from physics.drift_diffusion import compute_current_density, compute_recombination_components
-from physics.gain import compute_gain_spectrum
-from physics.coupled_solver import QuantumState, SolveCancelled, CoupledResult
+from physics.coupled_solver import SolveCancelled
 from physics import dd_newton
+from physics.kp.model import KPModel, local_well_transition as _kp_local_well_transition
 from physics.optical import (
     ground_state_transition, dominant_transition,
     overlap_squared, hole_subband_energy,
@@ -245,71 +243,6 @@ def _detect_quantum_region(g: GridData, margin_nm: float = 10.0) -> tuple[int, i
     return i0, i1
 
 
-def _solve_confined_states(V_eV_full: np.ndarray, m_full: np.ndarray, dx,
-                            n_states: int, i0: int, i1: int, N: int,
-                            E_cut: Optional[float] = None):
-    """
-    Solve the Schrödinger equation restricted to grid indices [i0, i1) and
-    embed the resulting wavefunctions into full-length (N-point),
-    zero-padded arrays, so downstream code (quantum_electron_density etc.)
-    can treat them exactly like a full-domain solve.
-
-    dx : scalar (uniform grid; used unchanged) or the full-device length-
-    (N-1) per-edge spacing array (non-uniform grid), which must be sliced
-    down to the subdomain's own edges (length i1-i0-1) before being handed
-    to solve_schrodinger -- passing the full-device array unsliced would
-    both be the wrong length and describe the wrong edges.
-
-    E_cut : if given, n_states is only a minimum -- it is doubled until the
-    highest returned state lies above E_cut (or the region runs out of
-    states). A fixed state count silently drops the charge of every well
-    whose states rank past it: on a 9-well MQW with n_states=6, the last
-    wells got NO quantum electrons at all (gamma pinned at 1e-8), the
-    potential there collapsed by ~1 V, and the next Schrodinger solve moved
-    all states into those wells instead -- the sloshing behind
-    [[bug-quantum-bias-electron-divergence]].
-    """
-    dx_sub = dx if np.ndim(dx) == 0 else np.asarray(dx)[i0:i1 - 1]
-    n_max = i1 - i0 - 2
-    while True:
-        E, psi_sub = solve_schrodinger(V_eV_full[i0:i1], m_full[i0:i1], dx_sub, n_states=n_states)
-        if E_cut is None or len(E) == 0 or E[-1] >= E_cut or n_states >= n_max:
-            break
-        n_states = min(2 * n_states, n_max)
-    psi_full = np.zeros((len(E), N))
-    psi_full[:, i0:i1] = psi_sub
-    return E, psi_full
-
-
-def _local_well_transition(g: GridData, Ec: np.ndarray, Ev: np.ndarray, i0: int, i1: int,
-                           dx_cell: np.ndarray, pad_nm: float = 4.0):
-    """(E_e1 - E_h1 [eV], |<psi_e|psi_h>|^2) of the well [i0, i1) from a
-    Schrodinger solve restricted to the well plus pad_nm of barrier on each
-    side (hard walls beyond). The hole is the topmost of the HH/LH/SO
-    ground states. None if no confined pair is found."""
-    x = g.x_nm
-    j0 = int(np.searchsorted(x, x[i0] - pad_nm))
-    j1 = int(min(g.N, np.searchsorted(x, x[i1 - 1] + pad_nm) + 1))
-    if j1 - j0 < 8:
-        return None
-    try:
-        E_e, psi_e = _solve_confined_states(Ec, g.m_e, g.dx, 2, j0, j1, g.N)
-        bands = _solve_hole_bands(Ev, g, g.dx, j0, j1, 2)
-    except Exception:  # noqa: BLE001 - diagnostic only, never break a solve
-        return None
-    if len(E_e) == 0:
-        return None
-    best = None
-    for E_h, psi_h in bands.values():
-        if len(E_h) and (best is None or E_h[0] < best[0]):
-            best = (E_h[0], psi_h[0])
-    if best is None:
-        return None
-    E_h1, psi_h1 = best
-    ov = overlap_squared(psi_e[0], psi_h1, dx_cell)
-    return float(E_e[0] + E_h1), float(ov)     # E_e - (-E_h)
-
-
 def _first_state_in_window(E: Optional[np.ndarray], psi: Optional[np.ndarray],
                             window: tuple[int, int], dx_cell: np.ndarray,
                             min_frac: float = 0.5) -> Optional[int]:
@@ -350,13 +283,6 @@ def _blended_density(quantum_density: np.ndarray, classical_density: np.ndarray,
     return np.where(region_mask, quantum_density, classical_density)
 
 
-# Hole band name -> mass array attr on GridData, for the decoupled 3-band
-# effective-mass valence model (see physics.materials.algan.AlGaNParams.
-# valence_offsets_from_top). Ev0 is the TOPMOST valence band; each band sits
-# g.dEv_<band> (>= 0) below it.
-_HOLE_BAND_MASS_ATTR = {'hh': 'm_hh', 'lh': 'm_lh', 'so': 'm_so'}
-
-
 # Quantum correction factor bounds: gamma = n_quantum/n_classical can be
 # enormous/tiny where both densities are negligible (deep depletion, or
 # above the highest computed subband); clipping keeps kT*ln(gamma) (the
@@ -392,38 +318,21 @@ def _hole_band_edges(Ev: np.ndarray, g: GridData) -> dict:
     return {'hh': Ev - g.dEv_hh, 'lh': Ev - g.dEv_lh, 'so': Ev - g.dEv_so}
 
 
-def _solve_hole_bands(Ev: np.ndarray, g: GridData, dx, q_i0: int, q_i1: int,
-                       n_states_h: int, E_cut: Optional[float] = None) -> dict:
-    """Solve HH/LH/SO confined states as three independent single-band
-    Schrodinger problems sharing the same quantum-region window, each with
-    its own band edge and effective mass. Returns {'hh'/'lh'/'so': (E, psi)}."""
-    edges = _hole_band_edges(Ev, g)
-    bands = {}
-    for name, Ev_band in edges.items():
-        m_band = getattr(g, _HOLE_BAND_MASS_ATTR[name])
-        V_hole = hole_potential(Ev_band)
-        bands[name] = _solve_confined_states(V_hole, m_band, dx, n_states_h, q_i0, q_i1, g.N, E_cut)
-    return bands
-
-
-def _total_quantum_hole_density(bands: dict, Efp, T: float, g: GridData,
-                                local_qfl: bool = False) -> np.ndarray:
-    """Sum quantum_hole_density across HH/LH/SO -- position-space density
-    is additive across independent (decoupled, unmixed) bands."""
-    total = np.zeros(g.N)
-    for name, (E, psi) in bands.items():
-        m_band = getattr(g, _HOLE_BAND_MASS_ATTR[name])
-        total = total + quantum_hole_density(psi, E, Efp, m_band, T, local_qfl)
-    return total
-
-
 def _nonlinear_poisson_residual_norm(
     phi_trial: np.ndarray, g: GridData, Efn: np.ndarray, Efp: np.ndarray, T: float,
     kBT_eV: float, Ed_x: np.ndarray, Ea_x: np.ndarray,
     surf_idx: np.ndarray, surf_density_cm3: np.ndarray,
     surf_energy_eV: np.ndarray, surf_is_donor: np.ndarray,
+    gamma_n=1.0, gamma_p=1.0,
 ) -> float:
     """
+    gamma_n/gamma_p: quantum correction factors n_quantum/n_classical the
+    equilibrium predictor-corrector holds fixed (1 = classical). The
+    residual must be that of the problem being solved: with the classical
+    densities, near a quantum solution no step reduced it, every PTC trial
+    was rejected, dt collapsed to 1e-31, phi froze and |dphi| = 0 read as
+    converged (confirmed on the AlGaAs/GaAs HEMT template).
+
     RMS of the TRUE nonlinear Poisson residual F(phi) = A_pos@phi - rho(phi)/eps0
     at a trial potential -- cheap (no linear solve) merit function for the
     biased-solve backtracking line search below. Reuses classical
@@ -437,8 +346,8 @@ def _nonlinear_poisson_residual_norm(
     """
     Ec_t = g.Ec0 - phi_trial
     Ev_t = g.Ev0 - phi_trial
-    n_t = electron_density(Ec_t, Efn, g.Nc, T)
-    p_t = hole_density(Ev_t, Efp, g.Nv, T)
+    n_t = electron_density(Ec_t, Efn, g.Nc, T) * gamma_n
+    p_t = hole_density(Ev_t, Efp, g.Nv, T) * gamma_p
 
     exp_arg_d = np.clip((Efn - (Ec_t - Ed_x)) / kBT_eV, -340.0, 340.0)
     exp_arg_a = np.clip((Ev_t + Ea_x - Efp) / kBT_eV, -340.0, 340.0)
@@ -567,6 +476,10 @@ class SolverResult:
     x_P: Optional[np.ndarray] = None
     E_h_lh: Optional[np.ndarray] = None
     psi_h_lh: Optional[np.ndarray] = None
+    # 8-band k.p: valence character of each hole level in E_h, as weights
+    # (on X,Y [heavy/light-hole-like], on Z [crystal-field / light along
+    # z], on S); shape (n_levels, 3). None when quantum=False.
+    hole_character: Optional[np.ndarray] = None
     E_h_so: Optional[np.ndarray] = None
     psi_h_so: Optional[np.ndarray] = None
 
@@ -607,7 +520,7 @@ class SolverResult:
     R_rad: Optional[np.ndarray] = None
     R_aug: Optional[np.ndarray] = None
 
-    # Optical gain spectrum (quantum mode only -- see physics.gain): material
+    # Optical gain spectrum (quantum mode only -- see physics.kp.solver.gain): material
     # gain g(hv) [cm^-1] vs photon energy, from the quantum well's own
     # confined subbands (E_e/psi_e, hole bands) and quasi-Fermi occupation,
     # Lorentzian-broadened across subband-pair transitions. None when
@@ -615,7 +528,8 @@ class SolverResult:
     # quantum well (qw_window).
     gain_energy_eV: Optional[np.ndarray] = None
     gain_wavelength_nm: Optional[np.ndarray] = None
-    gain_spectrum_cm1: Optional[np.ndarray] = None
+    gain_spectrum_cm1: Optional[np.ndarray] = None     # TE (in-plane polarisation), k.p
+    gain_TM_cm1: Optional[np.ndarray] = None           # TM (polarisation along z), k.p
     peak_gain_cm1: Optional[float] = None
     peak_gain_wavelength_nm: Optional[float] = None
 
@@ -1058,8 +972,9 @@ def solve_self_consistent(
     grid       : GridData from build_grid()
     V_applied  : applied voltage [V] (positive = forward bias)
     quantum    : if True, use Schrödinger equation for carrier density
-    n_states_e : electron subbands (quantum mode)
-    n_states_h : hole subbands (quantum mode)
+    n_states_e : k = 0 conduction levels reported in E_e/psi_e (quantum mode;
+                 the densities use every state in the occupation window)
+    n_states_h : k = 0 valence levels reported in E_h/psi_h (quantum mode)
     max_iter   : maximum SP iterations
     tol        : convergence threshold on max|Δphi| [V]
     alpha      : initial damping factor applied inside Anderson mixer (0 < alpha ≤ 1)
@@ -1488,6 +1403,33 @@ def solve_self_consistent(
             _log(f"  Quantum region ({region_source}): grid [{q_i0}:{q_i1}] "
                   f"= [{g.x_nm[q_i0]:.1f}, {g.x_nm[q_i1 - 1]:.1f}] nm "
                   f"(of {g.N} points spanning [0, {g.x_nm[-1]:.1f}] nm)")
+        # 8-band k.p (physics.kp): Gamma conduction band + valence bands,
+        # in-plane k integrated; X/L valleys of indirect zincblende layers
+        # single-band. The k-dependent matrices are built once here.
+        kp_model = KPModel(g, q_i0, q_i1)
+        if verbose and kp_model.ep_rescaled:
+            _log(f"  k.p: Ep lowered (Foreman, no spurious states) at {len(kp_model.ep_rescaled)} nodes, "
+                 f"e.g. {kp_model.ep_rescaled[0][1]} -> {kp_model.ep_rescaled[0][2]} eV")
+    kp_sol = None
+    hole_character = None
+    # Equilibrium quantum solves: predictor-corrector (Trellakis et al.,
+    # J. Appl. Phys. 81, 7880 (1997)). The k.p densities are frozen into
+    # correction factors gamma = n_quantum / n_classical; with gamma fixed,
+    # n = gamma n_classical(phi) responds to phi exactly as the Poisson
+    # Jacobian assumes, so the (convex) nonlinear Poisson problem converges
+    # at classical cost. Only then is k.p re-solved and gamma updated
+    # (log-space, adaptively damped). Converged when gamma no longer changes
+    # at a converged potential. Before this every one of ~300 Poisson steps
+    # re-solved k.p. Classical warm start: gamma = 1 until Poisson first
+    # converges (a gamma frozen at the far-off initial potential left the
+    # AlGaN/GaN HEMT unconverged after 400 iterations).
+    eq_need_kp = False
+    eq_lg_n = eq_lg_p = 0.0
+    eq_first_kp = True
+    eq_beta = _QUANTUM_GAMMA_BETA_INIT
+    eq_mismatch_prev = np.inf
+    eq_inner_res = np.inf
+    eq_kp_solves = 0
 
     E_e = E_h = psi_e = psi_h = None
     E_h_lh = psi_h_lh = E_h_so = psi_h_so = None
@@ -1537,6 +1479,7 @@ def solve_self_consistent(
     phi_eq_dd = None
     dd_prob = None
     dd_floor = 0.0      # transport floor a previous drift-diffusion solve of this run needed
+    dd_lo = None        # low parts of the double-double QFLs of the last drift-diffusion solve
 
     for iteration in range(max_iter):
         if cancel_check is not None and cancel_check():
@@ -1547,26 +1490,46 @@ def solve_self_consistent(
         Ev = g.Ev0 - phi
 
         # b/c. Carrier densities
-        if quantum:
-            # Energy cutoff _SUBBAND_CUTOFF_KT kT past the quasi-Fermi level
-            # (in the hole solver's inverted -Ev frame for holes): states
-            # beyond it carry negligible charge, states below it must all be
-            # present -- see _solve_confined_states.
-            E_cut_e = float(np.max(Efn[region_mask])) + _SUBBAND_CUTOFF_KT * kBT_eV
-            E_cut_h = float(-np.min(Efp[region_mask])) + _SUBBAND_CUTOFF_KT * kBT_eV
-            E_e, psi_e = _solve_confined_states(Ec, g.m_e, g.dx, n_states_e, q_i0, q_i1, g.N, E_cut_e)
-            n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T, bias_coupled),
-                                  electron_density(Ec, Efn, g.Nc, T), region_mask)
-
-            # Decoupled 3-band effective-mass valence model (HH/LH/SO) --
-            # see _solve_hole_bands and physics.materials.algan.
-            # AlGaNParams.valence_band_structure. E_h/psi_h stays the HH band
-            # for backward compatibility (QCSE optics, existing plots).
-            hole_bands = _solve_hole_bands(Ev, g, g.dx, q_i0, q_i1, n_states_h, E_cut_h)
-            E_h, psi_h = hole_bands['hh']
-            E_h_lh, psi_h_lh = hole_bands['lh']
-            E_h_so, psi_h_so = hole_bands['so']
-            p_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g, bias_coupled)
+        if quantum and not bias_coupled:
+            n_cl = electron_density(Ec, Efn, g.Nc, T)
+            p_cl = hole_density(Ev, Efp, g.Nv, T)
+            if eq_need_kp:
+                kp_sol = kp_model.solve(Ec, Ev, Efn, Efp, T, False, n_display=max(n_states_e, n_states_h))
+                eq_kp_solves += 1
+                n_q, p_q = kp_model.densities(kp_sol, Efn, Efp, T, False, Ec=Ec, Ev=Ev)
+                n_qb = _blended_density(n_q, n_cl, region_mask)
+                p_qb = _blended_density(p_q, p_cl, region_mask)
+                lg_n_new = np.log(_quantum_gamma(n_qb, n_cl, region_mask))
+                lg_p_new = np.log(_quantum_gamma(p_qb, p_cl, region_mask))
+                eq_need_kp = False
+                if eq_first_kp:
+                    eq_first_kp = False
+                    eq_lg_n, eq_lg_p = lg_n_new, lg_p_new
+                else:
+                    sig_n = n_qb > _GAMMA_MISMATCH_MIN_DENSITY
+                    sig_p = p_qb > _GAMMA_MISMATCH_MIN_DENSITY
+                    mism = max(float(np.max(np.abs(lg_n_new - eq_lg_n)[sig_n], initial=0.0)),
+                               float(np.max(np.abs(lg_p_new - eq_lg_p)[sig_p], initial=0.0)))
+                    if verbose:
+                        _log(f"  k.p solve {eq_kp_solves}: |dln(gamma)| = {mism:.2e}, beta = {eq_beta:.2f}")
+                    if mism < _GAMMA_MISMATCH_TOL and eq_inner_res < tol:
+                        converged = True
+                        n_iter = iteration + 1
+                        break
+                    eq_beta = (min(1.0, eq_beta * 1.5) if mism < eq_mismatch_prev
+                               else max(_QUANTUM_GAMMA_BETA_MIN, eq_beta * 0.5))
+                    eq_mismatch_prev = mism
+                    eq_lg_n = eq_lg_n + eq_beta * (lg_n_new - eq_lg_n)
+                    eq_lg_p = eq_lg_p + eq_beta * (lg_p_new - eq_lg_p)
+            n = n_cl * np.exp(eq_lg_n)
+            p = p_cl * np.exp(eq_lg_p)
+        elif quantum:
+            # 8-band k.p states over the in-plane k range that holds charge
+            # (occupation window _SUBBAND_CUTOFF_KT kT past each quasi-Fermi
+            # level, see physics.kp.solver), and their densities.
+            kp_sol = kp_model.solve(Ec, Ev, Efn, Efp, T, bias_coupled, n_display=max(n_states_e, n_states_h))
+            n_quantum, p_quantum = kp_model.densities(kp_sol, Efn, Efp, T, bias_coupled, Ec=Ec, Ev=Ev)
+            n = _blended_density(n_quantum, electron_density(Ec, Efn, g.Nc, T), region_mask)
             p = _blended_density(p_quantum, hole_density(Ev, Efp, g.Nv, T), region_mask)
         else:
             n = electron_density(Ec, Efn, g.Nc, T)
@@ -1652,7 +1615,7 @@ def solve_self_consistent(
                 cd_result = dd_newton.newton_solve(
                     dd_prob, phi, Efn, Efp,
                     (phi_left, phi_right, 0.0, -V_internal, 0.0, -V_internal),
-                    cancel_check=cancel_check)
+                    cancel_check=cancel_check, lo=dd_lo)
             if cd_result is None or not cd_result.converged:
                 if phi_eq_dd is None:
                     phi_eq_dd = _get_equilibrium_phi_init(
@@ -1668,6 +1631,7 @@ def solve_self_consistent(
             phi_candidate = cd_result.phi
             Efn = cd_result.Efn
             Efp = cd_result.Efp
+            dd_lo = cd_result.lo
 
             # Reuses alpha_history's slot to record the NK iteration count
             # for this step (not a damping factor -- there isn't one here).
@@ -1684,11 +1648,9 @@ def solve_self_consistent(
             Ec_cd = g.Ec0 - phi_candidate
             Ev_cd = g.Ev0 - phi_candidate
             if quantum:
-                n = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T, bias_coupled),
-                                      electron_density(Ec_cd, Efn, g.Nc, T), region_mask)
-                p_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g, bias_coupled)
-                p = _blended_density(p_quantum,
-                                      hole_density(Ev_cd, Efp, g.Nv, T), region_mask)
+                n_quantum, p_quantum = kp_model.densities(kp_sol, Efn, Efp, T, bias_coupled, Ec=Ec_cd, Ev=Ev_cd)
+                n = _blended_density(n_quantum, electron_density(Ec_cd, Efn, g.Nc, T), region_mask)
+                p = _blended_density(p_quantum, hole_density(Ev_cd, Efp, g.Nv, T), region_mask)
             else:
                 n = electron_density(Ec_cd, Efn, g.Nc, T)
                 p = hole_density(Ev_cd, Efp, g.Nv, T)
@@ -1800,9 +1762,11 @@ def solve_self_consistent(
             # rejection. dt -> infinity recovers the plain Newton step
             # exactly, so this never gives up robustness compared to before,
             # only adds it.
+            eq_gn = np.exp(eq_lg_n) if quantum else 1.0
+            eq_gp = np.exp(eq_lg_p) if quantum else 1.0
             res_current = _nonlinear_poisson_residual_norm(
                 phi, g, Efn, Efp, T, kBT_eV, Ed_x, Ea_x,
-                surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
+                surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor, eq_gn, eq_gp,
             )
             n_ptc_tries = 0
             while True:
@@ -1813,7 +1777,7 @@ def solve_self_consistent(
                 )
                 res_trial = _nonlinear_poisson_residual_norm(
                     phi_trial, g, Efn, Efp, T, kBT_eV, Ed_x, Ea_x,
-                    surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor,
+                    surf_idx, surf_density_cm3, surf_energy_eV, surf_is_donor, eq_gn, eq_gp,
                 )
                 if res_trial <= res_current or n_ptc_tries >= 30:
                     growth = min(res_current / max(res_trial, 1e-300), 3.0)
@@ -1895,9 +1859,18 @@ def solve_self_consistent(
                          f"continuing to max_iter={max_iter} (nextnano++-style fail-fast).")
                 break
         elif residual < tol:
-            converged = True
-            break
+            if quantum:
+                # Poisson converged for the current gamma: re-solve k.p there
+                # (convergence is declared at the start of the next iteration
+                # if gamma no longer changes).
+                eq_need_kp = True
+                eq_inner_res = residual
+            else:
+                converged = True
+                break
 
+    if verbose and quantum and not bias_coupled:
+        _log(f"  k.p solves: {eq_kp_solves} (Poisson iterations: {n_iter})")
     if not converged and verbose and n_iter >= max_iter:
         _log(f"  Warning: did not converge after {max_iter} iterations "
               f"(|dphi|={residual:.2e} V)")
@@ -1909,12 +1882,14 @@ def solve_self_consistent(
                 + 0.5 * kBT_eV * np.log(g.Nv / g.Nc))
     E_field  = electric_field(phi, g.dx)
 
-    if quantum and psi_e is not None:
-        n_final = _blended_density(quantum_electron_density(psi_e, E_e, Efn, g.m_e, T, bias_coupled),
-                                    electron_density(Ec_final, Efn, g.Nc, T), region_mask)
-        p_final_quantum = _total_quantum_hole_density(hole_bands, Efp, T, g, bias_coupled)
-        p_final = _blended_density(p_final_quantum,
-                                    hole_density(Ev_final, Efp, g.Nv, T), region_mask)
+    if quantum and kp_sol is not None:
+        n_final_q, p_final_q = kp_model.densities(kp_sol, Efn, Efp, T, bias_coupled, Ec=Ec_final, Ev=Ev_final)
+        n_final = _blended_density(n_final_q, electron_density(Ec_final, Efn, g.Nc, T), region_mask)
+        p_final = _blended_density(p_final_q, hole_density(Ev_final, Efp, g.Nv, T), region_mask)
+        # k = 0 levels in the legacy layout (one entry per Kramers pair):
+        # E_e/psi_e conduction, E_h/psi_h valence (inverted frame), with the
+        # valence character of each hole level.
+        E_e, psi_e, E_h, psi_h, hole_character, kp_lv_e, kp_lv_h = kp_model.display_states(kp_sol)
         Ev_hh_final, Ev_lh_final, Ev_so_final = (
             _hole_band_edges(Ev_final, g)[k] for k in ('hh', 'lh', 'so')
         )
@@ -1960,11 +1935,14 @@ def solve_self_consistent(
         # qw_window) over the global lowest-energy state: the latter can be
         # a polarization/doping-induced notch elsewhere in the device
         # rather than the well the user actually designed.
+        def kp_overlap(ie, ih):
+            return kp_model.overlap(kp_sol, kp_lv_e, kp_lv_h, ie, ih)
+
         if g.qw_window is not None:
             ie_sel = _first_state_in_window(E_e, psi_e, g.qw_window, dx_cell)
             ih_sel = _first_state_in_window(E_h, psi_h, g.qw_window, dx_cell)
             if ie_sel is not None and ih_sel is not None:
-                qcse_overlap = overlap_squared(psi_e[ie_sel], psi_h[ih_sel], dx_cell)
+                qcse_overlap = kp_overlap(ie_sel, ih_sel)
                 Ev_sub = hole_subband_energy(E_h)
                 qcse_transition_eV = float(E_e[ie_sel] - Ev_sub[ih_sel])
                 qcse_pair = (ie_sel, ih_sel)
@@ -1978,7 +1956,7 @@ def solve_self_consistent(
             # physically meaningful QCSE transition -- instead of pairing an
             # n-side electron with a p-side hole.
             if qcse_transition_eV is None:
-                loc = _local_well_transition(g, Ec_final, Ev_final, qw_i0, qw_i1, dx_cell)
+                loc = _kp_local_well_transition(g, Ec_final, Ev_final, qw_i0, qw_i1, T)
                 if loc is not None:
                     qcse_transition_eV, qcse_overlap = loc
                     qcse_pair = (0, 0)
@@ -1986,15 +1964,16 @@ def solve_self_consistent(
                     qcse_local_solve = True
 
         if qcse_transition_eV is None:
-            e1h1 = ground_state_transition(E_e, psi_e, E_h, psi_h, dx_cell)
+            e1h1 = ground_state_transition(E_e, psi_e, E_h, psi_h, dx_cell, overlap_fn=kp_overlap)
             if e1h1 is not None:
                 qcse_transition_eV = e1h1.energy_eV
                 qcse_overlap = e1h1.overlap
                 qcse_pair = (e1h1.ie, e1h1.ih)
                 qcse_in_well = False
 
-        dom = dominant_transition(E_e, psi_e, E_h, psi_h, dx_cell,
-                                   n_e=len(E_e), n_h=len(E_h))
+        dom = (dominant_transition(E_e, psi_e, E_h, psi_h, dx_cell,
+                                   n_e=len(E_e), n_h=len(E_h), overlap_fn=kp_overlap)
+               if E_e is not None and E_h is not None else None)
         if dom is not None:
             qcse_dominant_transition_eV = dom.energy_eV
             qcse_dominant_overlap = dom.overlap
@@ -2007,38 +1986,41 @@ def solve_self_consistent(
                                            **recombination_coefficients(g))
 
     # --- Optical gain spectrum (quantum mode, only if a design quantum
-    # well was found -- see physics.gain for the model and its caveats) ---
-    gain_energy_eV = gain_wavelength_nm = gain_spectrum_cm1 = None
+    # well was found) ---
+    gain_energy_eV = gain_wavelength_nm = gain_spectrum_cm1 = gain_TM_cm1 = None
     peak_gain_cm1 = peak_gain_wavelength_nm = None
-    if quantum and E_e is not None and g.qw_window is not None:
+    if quantum and kp_sol is not None and g.qw_window is not None:
+        # 8-band k.p material gain (physics.kp.solver.KPSolver.gain): every
+        # conduction/valence pair over the in-plane k range, Kane momentum
+        # matrix elements, TE (in-plane polarisation) and TM (along z),
+        # normalised by the design well's thickness.
         qw_i0, qw_i1 = g.qw_window
-        Lz_m = max(float(g.x_nm[qw_i1 - 1] - g.x_nm[qw_i0]) * 1e-9, 1e-10)
-        x_Al_well = float(np.mean(g.x_Al[qw_i0:qw_i1]))
+        Lz_nm = max(float(g.x_nm[qw_i1 - 1] - g.x_nm[qw_i0]), 0.1)
         Efn_well = float(np.mean(Efn[qw_i0:qw_i1]))
         Efp_well = float(np.mean(Efp[qw_i0:qw_i1]))
-        gain_kw = {}
-        if getattr(g, 'crystal', 'wurtzite') == 'zincblende':
-            from physics.materials.zincblende import get_zincblende_params
-            well = get_zincblende_params(x_Al_well, float(np.mean(g.x_In[qw_i0:qw_i1])),
-                                         float(np.mean(g.x_P[qw_i0:qw_i1])), T)
-            gain_kw = {'Ep_eV': well.Ep, 'n_r': 3.5}   # arsenide/phosphide refractive index
-        spectrum = compute_gain_spectrum(
-            E_e, psi_e, g.m_e, hole_bands,
-            {'hh': g.m_hh, 'lh': g.m_lh, 'so': g.m_so},
-            Efn_well, Efp_well, T, dx_cell, Lz_m, x_Al_well, **gain_kw,
-        )
-        if spectrum is not None:
-            gain_energy_eV = spectrum.energy_eV
-            gain_wavelength_nm = spectrum.wavelength_nm
-            gain_spectrum_cm1 = spectrum.gain_cm1
-            peak_gain_cm1 = spectrum.peak_gain_cm1
-            peak_gain_wavelength_nm = spectrum.peak_wavelength_nm
+        n_r = 3.5 if getattr(g, 'crystal', 'wurtzite') == 'zincblende' else 2.5
+        try:
+            spec = kp_model.solver.gain(Ec_final[q_i0:q_i1], Ev_final[q_i0:q_i1], Efn_well, Efp_well,
+                                        T, Lz_nm, n_r)
+        except Exception as exc:  # noqa: BLE001 - optics are a diagnostic, never fail a solve
+            spec = None
+            if verbose:
+                _log(f"  gain spectrum not computed: {exc}")
+        if spec is not None:
+            hv, g_te, g_tm = spec
+            gain_energy_eV = hv
+            gain_wavelength_nm = 1239.8419 / np.maximum(hv, 1e-6)
+            gain_spectrum_cm1 = g_te
+            gain_TM_cm1 = g_tm
+            i_pk = int(np.argmax(np.maximum(g_te, g_tm)))
+            peak_gain_cm1 = float(max(g_te[i_pk], g_tm[i_pk]))
+            peak_gain_wavelength_nm = float(gain_wavelength_nm[i_pk])
 
     J_n_edges = J_p_edges = None
     J_total = float('nan')
     current_err = float('nan')
     if bias_coupled and dd_prob is not None:
-        J_n_edges, J_p_edges, J_t_edges, current_err = dd_newton.current_profile(dd_prob, phi, Efn, Efp)
+        J_n_edges, J_p_edges, J_t_edges, current_err = dd_newton.current_profile(dd_prob, phi, Efn, Efp, dd_lo)
         J_total = float(np.mean(J_t_edges))
         if dd_floor > 0.0 and verbose:
             _log(f"  NOTE: a layer is cut off from both contacts, so its quasi-Fermi level was fixed with a "
@@ -2073,6 +2055,7 @@ def solve_self_consistent(
         x_P=(np.asarray(g.x_P).copy() if getattr(g, 'x_P', None) is not None
              else np.zeros_like(np.asarray(g.x_Al))),
         E_h_lh=E_h_lh, psi_h_lh=psi_h_lh, E_h_so=E_h_so, psi_h_so=psi_h_so,
+        hole_character=hole_character,
         qcse_transition_eV=qcse_transition_eV, qcse_overlap=qcse_overlap,
         qcse_pair=qcse_pair, qcse_in_well=qcse_in_well, qcse_local_solve=qcse_local_solve,
         qw_window_nm=qw_window_nm,
@@ -2086,7 +2069,7 @@ def solve_self_consistent(
         R_rad=None if (flat_qfl and V_applied != 0.0) else rec.R_rad,
         R_aug=None if (flat_qfl and V_applied != 0.0) else rec.R_aug,
         gain_energy_eV=gain_energy_eV, gain_wavelength_nm=gain_wavelength_nm,
-        gain_spectrum_cm1=gain_spectrum_cm1, peak_gain_cm1=peak_gain_cm1,
+        gain_spectrum_cm1=gain_spectrum_cm1, gain_TM_cm1=gain_TM_cm1, peak_gain_cm1=peak_gain_cm1,
         peak_gain_wavelength_nm=peak_gain_wavelength_nm,
         surface_charge_markers=surface_charge_markers,
         V_applied=V_applied, V_internal=V_internal, T=T,

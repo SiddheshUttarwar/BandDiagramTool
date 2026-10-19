@@ -74,11 +74,14 @@ def transition_matrix(
     E_h: Optional[np.ndarray], psi_h: Optional[np.ndarray],
     dx: float,
     n_e: Optional[int] = None, n_h: Optional[int] = None,
+    overlap_fn=None,
 ) -> List[Transition]:
     """
     All (electron subband, hole subband) transition energies and overlaps,
     for the lowest `n_e` electron and `n_h` hole subbands (default: every
-    solved state).
+    solved state). overlap_fn(ie, ih), if given, replaces the single-
+    component overlap_squared (the k.p solver passes the spinor overlap,
+    physics.kp.model.spinor_overlap).
     """
     if E_e is None or E_h is None or len(E_e) == 0 or len(E_h) == 0:
         return []
@@ -89,7 +92,8 @@ def transition_matrix(
     out: List[Transition] = []
     for ie in range(n_e):
         for ih in range(n_h):
-            overlap = overlap_squared(psi_e[ie], psi_h[ih], dx)
+            overlap = (overlap_fn(ie, ih) if overlap_fn is not None
+                       else overlap_squared(psi_e[ie], psi_h[ih], dx))
             energy = float(E_e[ie]) - float(Ev_sub[ih])
             out.append(Transition(ie=ie, ih=ih, energy_eV=energy, overlap=overlap))
     return out
@@ -98,17 +102,17 @@ def transition_matrix(
 def ground_state_transition(
     E_e: Optional[np.ndarray], psi_e: Optional[np.ndarray],
     E_h: Optional[np.ndarray], psi_h: Optional[np.ndarray],
-    dx: float,
+    dx: float, overlap_fn=None,
 ) -> Optional[Transition]:
     """The e1-h1 transition: the headline QCSE number (redshift + overlap)."""
-    matrix = transition_matrix(E_e, psi_e, E_h, psi_h, dx, n_e=1, n_h=1)
+    matrix = transition_matrix(E_e, psi_e, E_h, psi_h, dx, n_e=1, n_h=1, overlap_fn=overlap_fn)
     return matrix[0] if matrix else None
 
 
 def dominant_transition(
     E_e: Optional[np.ndarray], psi_e: Optional[np.ndarray],
     E_h: Optional[np.ndarray], psi_h: Optional[np.ndarray],
-    dx: float, n_e: int = 4, n_h: int = 4,
+    dx: float, n_e: int = 4, n_h: int = 4, overlap_fn=None,
 ) -> Optional[Transition]:
     """
     The highest-overlap transition among the lowest few subbands. Under
@@ -116,7 +120,7 @@ def dominant_transition(
     a higher-index pair actually carries more oscillator strength; this is
     the pair most likely to dominate emission/absorption in that regime.
     """
-    matrix = transition_matrix(E_e, psi_e, E_h, psi_h, dx, n_e=n_e, n_h=n_h)
+    matrix = transition_matrix(E_e, psi_e, E_h, psi_h, dx, n_e=n_e, n_h=n_h, overlap_fn=overlap_fn)
     if not matrix:
         return None
     return max(matrix, key=lambda t: t.overlap)

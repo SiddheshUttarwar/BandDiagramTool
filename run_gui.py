@@ -75,4 +75,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # the k.p solver runs in-plane k points in worker processes
+    # (physics.kp.solver); needed for the packaged .exe
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

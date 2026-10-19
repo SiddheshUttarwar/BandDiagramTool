@@ -23,6 +23,7 @@ actions (new / open / save / save as).
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional
 
@@ -322,13 +323,17 @@ class App(QtWidgets.QMainWindow):
                  "wavelength in nm, in eV) exceeds its band gap at this temperature."),
                 ("power_W_cm2", "Power", "1", "W/cm²", "Power density of the light at the surface"),
                 ("absorption_cm", "Absorption", "3e5", "cm⁻¹",
-                 "Absorption coefficient well above the gap; it falls to zero at the gap")):
+                 "Absorption coefficient well above the gap; it falls to zero at the gap"),
+                ("surface_S", "Surface recomb.", "1e4", "cm/s",
+                 "Recombination velocity of the free top surface (electrons and holes alike). It depends "
+                 "strongly on the surface and its treatment. 'inf' pins both quasi-Fermi levels together at "
+                 "the surface, as a contact.")):
             edit = QtWidgets.QLineEdit(default)
             self._growth_fields[key] = edit
             box.body.addLayout(widgets.form_row(label, edit, unit, tip))
         box.body.addWidget(widgets.note(
-            "Light enters through the top surface and no current is drawn. The top contact stands for "
-            "the free surface (a Schottky barrier is its Fermi-level pinning)."))
+            "Light enters through the top surface and no current is drawn. The top contact sets the free "
+            "surface's dark band bending (a Schottky barrier is its Fermi-level pinning)."))
         band_row = QtWidgets.QHBoxLayout()
         band_btn = QtWidgets.QPushButton("Solve bands under light")
         band_btn.setToolTip("Band diagram and carriers with the light on, at open circuit, "
@@ -357,8 +362,11 @@ class App(QtWidgets.QMainWindow):
                                  include_spontaneous_polarization=s.include_spontaneous_polarization,
                                  polarity=s.polarity, polarization_model=s.polarization_model,
                                  recombination=s.recombination())
+            S = f["surface_S"]
             result = solve_illuminated(device, wavelength_nm=f["wavelength_nm"], power_W_cm2=f["power_W_cm2"],
-                                       above_gap_cm=f["absorption_cm"], log_fn=self.plot_panel.append_log)
+                                       above_gap_cm=f["absorption_cm"], log_fn=self.plot_panel.append_log,
+                                       surface_velocity_cm_s=S if math.isfinite(S) else None,
+                                       quantum=bool(s.quantum))
         except Exception as exc:  # noqa: BLE001
             self.plot_panel.set_status(f"Bands under light failed: {exc}")
             return

@@ -38,6 +38,15 @@ Design:
     linear solve's pivoting.
   * Globalization: per-step update limiting, plus adaptive bias
     continuation from equilibrium (solve_bias_ramp).
+  * The quasi-Fermi levels are carried in double-double precision
+    (Efn + Efn_lo): the flux depends on the QFL DIFFERENCE between nodes,
+    and in a degenerate layer the difference that carries the current is
+    far below one ulp of Efn itself. Confirmed on an InGaN/GaN p-i-n at
+    2.07 V: n = 5e18 cm^-3 in the well needs dEfn ~ 1e-21 eV per node, one
+    ulp of Efn = 1.4e-3 eV is 2e-19 eV, so every well edge carried a flux of
+    exactly 0 or +-7e10 cm^-2 s^-1 (holes in the p-GaN likewise, ulp 4e-16
+    at Efp = -2.07 eV), the injected currents were undetermined and the
+    minority QFLs fed by them never converged.
 """
 
 from __future__ import annotations
@@ -79,6 +88,10 @@ _LEAP_BACKOFF_MIN = 0.015   # start states at least this far behind the fold [V]
 _LEAP_N_STARTS = 3
 _RAMP_RETRY_PATTERNS = ((0.25, 1.0), (0.4, 1.0), (0.15, 0.6))
 _NOISE_UPDATE_MAX = 1e-4
+# residual level (row-scaled, V) counted as the round-off floor for the
+# one-carrier-per-cm^3 acceptance in newton_solve
+_RES_VOLTS_NOISE = 1e-8
+_FLOOR_ITERS = 3
 # Fallback for a carrier system cut off from the contacts (see
 # DDProblem.transport_floor): the flux floor, as a fraction of the largest
 # carrier density in the device. 1e-10 conserves the current to ~1e-3 and
@@ -187,6 +200,26 @@ def _sg_flux(la, lc, b, C):
     return G, dla, dlc, db
 
 
+def _qfl_step(E, lo, k):
+    """E[i+1] - E[i] of a double-double QFL (E + lo[k]). The difference of
+    the high parts is exact (Sterbenz: neighbouring values), so the sum keeps
+    the sub-ulp step carried by the low parts."""
+    d = E[1:] - E[:-1]
+    if lo is None:
+        return d
+    L = lo[k]
+    return d + (L[1:] - L[:-1])
+
+
+def _dd_add(hi, lo, d):
+    """(hi, lo) + d in double-double arithmetic (two-sum, then renormalise)."""
+    s = hi + d
+    bb = s - hi
+    lo = lo + ((hi - (s - bb)) + (d - bb))
+    hi = s + lo
+    return hi, lo - (hi - s)
+
+
 @dataclass
 class DDProblem:
     """Static device data for one drift-diffusion solve."""
@@ -225,6 +258,14 @@ class DDProblem:
     # It is the remedy nextnano++ applies (minimum_density_electrons/holes);
     # here it is used only as a fallback, see solve_bias_ramp.
     transport_floor: float = 0.0
+    # Free surface at the last node instead of a contact: (S_n, S_p [cm/s],
+    # n1, p1 [cm^-3]). The QFL rows become the half-cell balance with SRH
+    # recombination through surface states, R_s = (n p - ni_eff^2) /
+    # ((n + n1)/S_p + (p + p1)/S_n), and the phi row keeps the occupancy of
+    # those states at its dark value (Fermi-level pinning by a dense set of
+    # states: S_n (n - n1) = S_p (p - p1); n1, p1 = the dark surface
+    # densities). None = the last node is a contact (Dirichlet).
+    surface: Optional[tuple] = None
     tau_n: object = None
     tau_p: object = None
     B_rad: object = None
@@ -345,18 +386,19 @@ class DDProblem:
         tp = np.logaddexp(ln_p, lf)
         return tn, tp, dln_n * np.exp(ln_n - tn), dln_p * np.exp(ln_p - tp)
 
-    def fluxes(self, phi, Efn, Efp):
-        """Edge particle fluxes G = Jn/q, H = Jp/q [cm^-2 s^-1] (length N-1)."""
+    def fluxes(self, phi, Efn, Efp, lo=None):
+        """Edge particle fluxes G = Jn/q, H = Jp/q [cm^-2 s^-1] (length N-1).
+        lo: (Efn_lo, Efp_lo), the low parts of double-double QFLs, or None."""
         ln_n, ln_p, dln_n, dln_p = self.carriers(phi, Efn, Efp)
         ln_n, ln_p, _, _ = self._transport(ln_n, ln_p, dln_n, dln_p)
         kT = self.kT
-        G, *_ = _sg_flux(ln_n[:-1], ln_n[1:], (Efn[1:] - Efn[:-1]) / kT, self._Cn)
+        G, *_ = _sg_flux(ln_n[:-1], ln_n[1:], _qfl_step(Efn, lo, 0) / kT, self._Cn)
         # Holes: mirror image -- density ln p, "quasi-Fermi" -Efp, and the
         # sign of the resulting flux flipped so H -> mu p dEfp/dx.
-        Hm, *_ = _sg_flux(ln_p[:-1], ln_p[1:], -(Efp[1:] - Efp[:-1]) / kT, self._Cp)
+        Hm, *_ = _sg_flux(ln_p[:-1], ln_p[1:], -_qfl_step(Efp, lo, 1) / kT, self._Cp)
         return G, -Hm
 
-    def residual_and_jacobian(self, phi, Efn, Efp, bc, want_jac=True):
+    def residual_and_jacobian(self, phi, Efn, Efp, bc, want_jac=True, lo=None):
         N, kT = self.N, self.kT
         ln_n, ln_p, dln_n, dln_p = self.carriers(phi, Efn, Efp)
         n = np.exp(ln_n)
@@ -400,13 +442,13 @@ class DDProblem:
         ln_n, ln_p, dln_n, dln_p = self._transport(ln_n, ln_p, dln_n, dln_p)
 
         # ---------------- electrons ----------------
-        bn = (Efn[1:] - Efn[:-1]) / kT
+        bn = _qfl_step(Efn, lo, 0) / kT
         G, g_la, g_lc, g_b = _sg_flux(ln_n[:-1], ln_n[1:], bn, self._Cn)
         cwc = self._cw_cm[1:-1]
         # edges: k = i-1/2 -> index i-1 ; i+1/2 -> index i
         F[iN[I]] = (G[I] - G[I - 1]) / cwc - R[I]
         # ---------------- holes (mirror) ----------------
-        bp = -(Efp[1:] - Efp[:-1]) / kT
+        bp = -_qfl_step(Efp, lo, 1) / kT
         Hm, h_la, h_lc, h_b = _sg_flux(ln_p[:-1], ln_p[1:], bp, self._Cp)
         H = -Hm
         F[iH[I]] = (H[I] - H[I - 1]) / cwc + R[I]
@@ -455,13 +497,58 @@ class DDProblem:
 
         # ---------------- Dirichlet contacts ----------------
         phiL, phiR, EfnL, EfnR, EfpL, EfpR = bc
-        for node, vals_bc in ((0, (phiL, EfnL, EfpL)), (N - 1, (phiR, EfnR, EfpR))):
+        ends = ((0, (phiL, EfnL, EfpL)),) if self.surface is not None else             ((0, (phiL, EfnL, EfpL)), (N - 1, (phiR, EfnR, EfpR)))
+        for node, vals_bc in ends:
             F[iP[node]] = phi[node] - vals_bc[0]
-            F[iN[node]] = Efn[node] - vals_bc[1]
-            F[iH[node]] = Efp[node] - vals_bc[2]
+            F[iN[node]] = Efn[node] - vals_bc[1] + (0.0 if lo is None else lo[0][node])
+            F[iH[node]] = Efp[node] - vals_bc[2] + (0.0 if lo is None else lo[1][node])
             if want_jac:
                 for rr in (iP[node], iN[node], iH[node]):
                     add(np.array([rr]), np.array([rr]), np.array([1.0]))
+
+        if self.surface is not None:
+            # replaces the Dirichlet rows of the last node
+            k = N - 1
+            Sn, Sp, n1, p1 = self.surface
+            n_k, p_k = n[k], p[k]
+            a_k = np.clip((Efn[k] + (0.0 if lo is None else lo[0][k]) - Efp[k]
+                           - (0.0 if lo is None else lo[1][k])) / kT, -600.0, 600.0)
+            omE = -np.expm1(-a_k)
+            ni2_k = n_k * p_k * np.exp(-a_k)
+            excess = n_k * p_k * omE
+            den = (n_k + n1) / Sp + (p_k + p1) / Sn
+            Rs = excess / den
+            dRs_dn = p_k * omE / den - excess / den ** 2 / Sp
+            dRs_dp = n_k * omE / den - excess / den ** 2 / Sn
+            dRs_dlnE = -ni2_k / den
+            dRs_dphi = dRs_dn * dn[k] + dRs_dp * dp[k]
+            dRs_dEfn = dRs_dn * dn[k] - dRs_dlnE / kT
+            dRs_dEfp = dRs_dp * dp[k] + dRs_dlnE / kT
+            cwk = self._cw_cm[k]
+            F[iN[k]] = (-Rs - G[k - 1]) / cwk - R[k]
+            F[iH[k]] = (Rs - H[k - 1]) / cwk + R[k]
+            F[iP[k]] = (Sn * (n_k - n1) - Sp * (p_k - p1)) / (Sn * n1 + Sp * p1)
+            if want_jac:
+                dRph = dR_dn[k] * dn[k] + dR_dp[k] * dp[k]
+                dRen = dR_dn[k] * dn[k] + dR_dEfn[k]
+                dRep = dR_dp[k] * dp[k] + dR_dEfp[k]
+                s_ = 1.0 / cwk
+                ga, gc, gb = g_la[k - 1], g_lc[k - 1], g_b[k - 1]
+                add(iN[k], iP[k - 1], -s_ * ga * dln_n[k - 1])
+                add(iN[k], iN[k - 1], -s_ * (ga * dln_n[k - 1] - gb / kT))
+                add(iN[k], iP[k], -s_ * gc * dln_n[k] - s_ * dRs_dphi - dRph)
+                add(iN[k], iN[k], -s_ * (gc * dln_n[k] + gb / kT) - s_ * dRs_dEfn - dRen)
+                add(iN[k], iH[k], -s_ * dRs_dEfp - dRep)
+                ha, hc, hb = h_la[k - 1], h_lc[k - 1], h_b[k - 1]
+                add(iH[k], iP[k - 1], s_ * ha * dln_p[k - 1])
+                add(iH[k], iH[k - 1], s_ * (ha * dln_p[k - 1] + hb / kT))
+                add(iH[k], iP[k], s_ * hc * dln_p[k] + s_ * dRs_dphi + dRph)
+                add(iH[k], iH[k], s_ * (hc * dln_p[k] - hb / kT) + s_ * dRs_dEfp + dRep)
+                add(iH[k], iN[k], s_ * dRs_dEfn + dRen)
+                sc = 1.0 / (Sn * n1 + Sp * p1)
+                add(iP[k], iP[k], sc * (Sn * dn[k] - Sp * dp[k]))
+                add(iP[k], iN[k], sc * Sn * dn[k])
+                add(iP[k], iH[k], -sc * Sp * dp[k])
 
         if not want_jac:
             return F, None
@@ -483,26 +570,49 @@ class DDResult:
     V_reached: float = 0.0
     message: str = ""
     transport_floor: float = 0.0   # minimum flux density the solve needed [cm^-3]; 0 = exact equations
+    # low parts of the double-double quasi-Fermi levels (see the module
+    # docstring); None = zero. Efn + Efn_lo is the solution.
+    Efn_lo: Optional[np.ndarray] = None
+    Efp_lo: Optional[np.ndarray] = None
+
+    @property
+    def lo(self):
+        """(Efn_lo, Efp_lo) for fluxes / current_profile / newton_solve, or None."""
+        return None if self.Efn_lo is None else (self.Efn_lo, self.Efp_lo)
 
 
 def newton_solve(prob: DDProblem, phi, Efn, Efp, bc,
                  tol_update: float = 1e-7, maxiter: int = 40,
                  max_step: float = 0.5,
                  log_fn: Optional[Callable[[str], None]] = None,
-                 cancel_check: Optional[Callable[[], bool]] = None) -> DDResult:
+                 cancel_check: Optional[Callable[[], bool]] = None,
+                 lo=None) -> DDResult:
     """Damped Newton at fixed contact BCs. Converged when the full
-    (undamped) Newton update is below tol_update volts in every unknown."""
+    (undamped) Newton update is below tol_update volts in every unknown.
+    lo: (Efn_lo, Efp_lo) of the starting state (DDResult.lo), or None."""
     N = prob.N
     phi, Efn, Efp = phi.copy(), Efn.copy(), Efp.copy()
     phi[0], Efn[0], Efp[0] = bc[0], bc[2], bc[4]
-    phi[-1], Efn[-1], Efp[-1] = bc[1], bc[3], bc[5]
+    if prob.surface is None:                 # a free surface's values are unknowns
+        phi[-1], Efn[-1], Efp[-1] = bc[1], bc[3], bc[5]
+    Efn_lo = np.zeros(N) if lo is None else np.array(lo[0], dtype=float)
+    Efp_lo = np.zeros(N) if lo is None else np.array(lo[1], dtype=float)
+    for a in (Efn_lo, Efp_lo):
+        a[0] = 0.0
+        if prob.surface is None:
+            a[-1] = 0.0
+
+    def result(conv, it, upd, message=""):
+        return DDResult(phi, Efn, Efp, conv, it, upd, message=message, Efn_lo=Efn_lo, Efp_lo=Efp_lo)
     max_upd = np.inf
+    floor_run = 0
     for it in range(1, maxiter + 1):
         if cancel_check is not None and cancel_check():
             raise SolveCancelled("Solve cancelled by user")
-        F, J = prob.residual_and_jacobian(phi, Efn, Efp, (bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]))
+        F, J = prob.residual_and_jacobian(phi, Efn, Efp, (bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]),
+                                          lo=(Efn_lo, Efp_lo))
         if not np.all(np.isfinite(F)):
-            return DDResult(phi, Efn, Efp, False, it, np.inf, message="non-finite residual")
+            return result(False, it, np.inf, "non-finite residual")
         # Row equilibration (pivoting quality only; doesn't change the step).
         row_max = np.abs(J).max(axis=1).toarray().ravel()
         row_max[row_max == 0] = 1.0
@@ -510,9 +620,9 @@ def newton_solve(prob: DDProblem, phi, Efn, Efp, bc,
         try:
             delta = -spsolve((S @ J).tocsc(), S @ F)
         except Exception as exc:  # noqa: BLE001
-            return DDResult(phi, Efn, Efp, False, it, np.inf, message=f"linear solve failed: {exc}")
+            return result(False, it, np.inf, f"linear solve failed: {exc}")
         if not np.all(np.isfinite(delta)):
-            return DDResult(phi, Efn, Efp, False, it, np.inf, message="non-finite Newton step")
+            return result(False, it, np.inf, "non-finite Newton step")
         # Convergence measure (undamped update): phi everywhere, and each
         # QFL weighted by min(1, density / 1 cm^-3). A QFL is only defined
         # to roundoff where its carrier is essentially absent (confirmed on
@@ -522,9 +632,13 @@ def newton_solve(prob: DDProblem, phi, Efn, Efp, bc,
         # nothing. Where n, p >= 1 cm^-3 the full tol_update applies.
         # current_profile's conservation check stays as the independent,
         # unmaskable physics check.
+        # (weighted by the larger of the density now and after the update:
+        # a 314 V step on the surface Efn of an illuminated p-n diode at
+        # n = 3e-12 cm^-3 counted as 1e-9 V with min(1, n) and was accepted)
         ln_n, ln_p, _, _ = prob.carriers(phi, Efn, Efp)
-        w_n = np.exp(np.minimum(ln_n, 0.0))
-        w_p = np.exp(np.minimum(ln_p, 0.0))
+        kT = prob.kT
+        w_n = np.exp(np.minimum(ln_n + np.minimum(np.abs(delta[1::3]) / kT, 700.0), 0.0))
+        w_p = np.exp(np.minimum(ln_p + np.minimum(np.abs(delta[2::3]) / kT, 700.0), 0.0))
         max_upd = float(max(np.abs(delta[0::3]).max(),
                             np.abs(delta[1::3] * w_n).max(),
                             np.abs(delta[2::3] * w_p).max()))
@@ -539,8 +653,8 @@ def newton_solve(prob: DDProblem, phi, Efn, Efp, bc,
         damped = np.sign(delta) * kT * np.log1p(np.abs(delta) / kT)
         damped = np.clip(damped, -max_step, max_step)
         phi += damped[0::3]
-        Efn += damped[1::3]
-        Efp += damped[2::3]
+        Efn, Efn_lo = _dd_add(Efn, Efn_lo, damped[1::3])
+        Efp, Efp_lo = _dd_add(Efp, Efp_lo, damped[2::3])
         # Row-equilibrated residual: each row divided by its largest
         # Jacobian entry, i.e. "how many volts the dominant unknown of that
         # row is off by" -- a scale taken from the equations themselves, not
@@ -555,8 +669,51 @@ def newton_solve(prob: DDProblem, phi, Efn, Efp, bc,
             log_fn(f"      Newton {it:2d}: max|update| = {max_upd:.3e} V  "
                    f"row-scaled residual = {res_volts:.3e} V")
         if max_upd < tol_update or (res_volts < _RES_VOLTS_TOL and max_upd < _NOISE_UPDATE_MAX):
-            return DDResult(phi, Efn, Efp, True, it, max_upd)
-    return DDResult(phi, Efn, Efp, False, maxiter, max_upd, message="maxiter")
+            return result(True, it, max_upd)
+        # At the round-off floor a QFL update may also be one that changes
+        # its density by less than one carrier per cm^3 (n |dEf| / kT < 1):
+        # nothing that density does is resolvable. Confirmed on the InGaN
+        # p-i-n at -0.05 V: Efn and Efp moved together by up to 6e-4 V at the
+        # well (n 0.5, p 1e-7 cm^-3; n p and so R unchanged) with the residual
+        # at 1e-10, the ramp stalled and the transport-floor fallback gave a
+        # reverse current 20 orders too large.
+        # The same measure for the residual: a continuity row's row-scaled
+        # residual is the volts its QFL is off, i.e. a density error of
+        # n (exp(res/kT) - 1). At -0.95 V the largest residuals (2.7e-7 V)
+        # sat at n ~ 2e-16 cm^-3 in the depletion region. (The exponential,
+        # not n res / kT: a QFL 7e3 V off at n ~ 1e-37 -- the first light
+        # step of an illuminated p-n diode -- is not converged.)
+        def dens_err(volts, ln_c):
+            return np.exp(ln_c) * np.expm1(np.minimum(volts / kT, 700.0))
+        SF = np.abs(S @ F)
+        res_ok = (SF[0::3].max() < _RES_VOLTS_NOISE
+                  and ((SF[1::3] < _RES_VOLTS_NOISE) | (dens_err(SF[1::3], ln_n) < 1.0)).all()
+                  and ((SF[2::3] < _RES_VOLTS_NOISE) | (dens_err(SF[2::3], ln_p) < 1.0)).all())
+        if res_ok:
+            dn = dens_err(np.abs(delta[1::3]), ln_n)
+            dp = dens_err(np.abs(delta[2::3]), ln_p)
+            qfl_ok = (((np.abs(delta[1::3]) < _NOISE_UPDATE_MAX) | (dn < 1.0)).all()
+                      and ((np.abs(delta[2::3]) < _NOISE_UPDATE_MAX) | (dp < 1.0)).all())
+            if qfl_ok and np.abs(delta[0::3]).max() < _NOISE_UPDATE_MAX:
+                return result(True, it, max_upd)
+            # Residual at its round-off floor for _FLOOR_ITERS iterations in a
+            # row: the solution is as determined as double precision allows.
+            # What still moves is a numerically null direction of the
+            # Jacobian (cond ~ 1e15): confirmed on the InGaN p-i-n at 2.1 V,
+            # where a 1e-3 V step along it changed J from 2.2e-9 to 3.4e-9
+            # A/cm^2 with the row-scaled residual still 2.7e-10 -- a current
+            # 14 orders below the degenerate n-side's gross flux is not
+            # resolved, every point along it is equally a solution, and
+            # Newton bounced among them until the ramp stalled.
+            # (only while Newton is local -- every update below kT: an
+            # accepted 1e18 V surface-QFL step at 1e-10 of the light left the
+            # next step nowhere to start from)
+            floor_run = floor_run + 1 if np.abs(delta).max() < kT else 0
+            if floor_run >= _FLOOR_ITERS:
+                return result(True, it, max_upd, "round-off limited (residual at machine precision)")
+        else:
+            floor_run = 0
+    return result(False, maxiter, max_upd, "maxiter")
 
 
 def solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
@@ -630,6 +787,7 @@ def solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
 def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
                     phi_left: float, phi_right_eq: float,
                     phi_start=None, Efn_start=None, Efp_start=None, V_start: float = 0.0,
+                    lo_start=None,
                     dV_init: float = 0.1, dV_max: float = 0.5, dV_min: float = 1e-3,
                     tol_update: float = 1e-7,
                     log_fn: Optional[Callable[[str], None]] = None,
@@ -648,6 +806,7 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
     phi = (phi_eq if phi_start is None else phi_start).copy()
     Efn = np.zeros(prob.N) if Efn_start is None else Efn_start.copy()
     Efp = np.zeros(prob.N) if Efp_start is None else Efp_start.copy()
+    lo = lo_start
     V = V_start
     sign = 1.0 if V_target >= V_start else -1.0
     dV = min(dV_init, abs(V_target - V_start))
@@ -662,23 +821,23 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
         if not res0.converged:
             return DDResult(phi, Efn, Efp, False, total_iter, res0.max_update, V_reached=V,
                             message=f"could not converge the starting point at V = {V:.4f} V")
-        phi, Efn, Efp = res0.phi, res0.Efn, res0.Efp
+        phi, Efn, Efp, lo = res0.phi, res0.Efn, res0.Efp, res0.lo
     if abs(V_target - V_start) == 0.0:
         bc = (phi_left, phi_right_eq + V, 0.0, -V, 0.0, -V)
         res = newton_solve(prob, phi, Efn, Efp, bc, tol_update=tol_update,
-                           log_fn=log_fn, cancel_check=cancel_check)
+                           log_fn=log_fn, cancel_check=cancel_check, lo=lo)
         res.V_reached = V
         return res
-    history = [(V, phi, Efn, Efp)]
+    history = [(V, phi, Efn, Efp, lo)]
     while abs(V_target - V) > 1e-12:
         V_try = V + sign * min(dV, abs(V_target - V))
         bc = (phi_left, phi_right_eq + V_try, 0.0, -V_try, 0.0, -V_try)
         res = newton_solve(prob, phi, Efn, Efp, bc, tol_update=tol_update,
-                           log_fn=None, cancel_check=cancel_check)
+                           log_fn=None, cancel_check=cancel_check, lo=lo)
         total_iter += res.n_iter
         if res.converged:
-            phi, Efn, Efp, V = res.phi, res.Efn, res.Efp, V_try
-            history.append((V, phi, Efn, Efp))
+            phi, Efn, Efp, lo, V = res.phi, res.Efn, res.Efp, res.lo, V_try
+            history.append((V, phi, Efn, Efp, lo))
             if log_fn is not None:
                 log_fn(f"    DD ramp: V = {V:.4f} V converged in {res.n_iter} Newton iters")
             dV = min(dV * (1.5 if res.n_iter <= 12 else 1.0), dV_max)
@@ -702,7 +861,8 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
                 leapt = False
                 if not leap:      # the caller has a cheaper remedy to try first
                     return DDResult(phi, Efn, Efp, False, total_iter, res.max_update, V_reached=V,
-                                    message=f"bias ramp stalled at V = {V:.4f} V")
+                                    message=f"bias ramp stalled at V = {V:.4f} V",
+                                    Efn_lo=None if lo is None else lo[0], Efp_lo=None if lo is None else lo[1])
                 remaining = abs(V_target - V)
                 starts = [h for h in reversed(history)
                           if abs(V - h[0]) in (0.0,) or abs(V - h[0]) >= _LEAP_BACKOFF_MIN][:_LEAP_N_STARTS]
@@ -710,21 +870,21 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
                     jump = min(jump, remaining)
                     V_try = V + sign * jump
                     bc = (phi_left, phi_right_eq + V_try, 0.0, -V_try, 0.0, -V_try)
-                    for (V_s, phi_s, Efn_s, Efp_s) in starts:
+                    for (V_s, phi_s, Efn_s, Efp_s, lo_s) in starts:
                         res = newton_solve(prob, phi_s, Efn_s, Efp_s, bc, tol_update=tol_update,
-                                           maxiter=_LEAP_MAXITER, cancel_check=cancel_check)
+                                           maxiter=_LEAP_MAXITER, cancel_check=cancel_check, lo=lo_s)
                         total_iter += res.n_iter
                         if res.converged:
                             break
                     if res.converged:
                         if log_fn is not None:
-                            J_old = float(np.mean(current_profile(prob, phi, Efn, Efp)[2]))
-                            J_new = float(np.mean(current_profile(prob, res.phi, res.Efn, res.Efp)[2]))
+                            J_old = float(np.mean(current_profile(prob, phi, Efn, Efp, lo)[2]))
+                            J_new = float(np.mean(current_profile(prob, res.phi, res.Efn, res.Efp, res.lo)[2]))
                             log_fn(f"    DD ramp: I-V fold near V = {V:.4f} V (J = {J_old:.3e} A/cm^2); "
                                    f"jumped to the other branch at V = {V_try:.4f} V "
                                    f"(J = {J_new:.3e} A/cm^2)")
-                        phi, Efn, Efp, V = res.phi, res.Efn, res.Efp, V_try
-                        history.append((V, phi, Efn, Efp))
+                        phi, Efn, Efp, lo, V = res.phi, res.Efn, res.Efp, res.lo, V_try
+                        history.append((V, phi, Efn, Efp, lo))
                         dV = dV_init
                         leapt = True
                         break
@@ -732,19 +892,21 @@ def _solve_bias_ramp(prob: DDProblem, phi_eq, V_target: float,
                         break
                 if not leapt:
                     return DDResult(phi, Efn, Efp, False, total_iter, res.max_update, V_reached=V,
-                                    message=f"bias ramp stalled at V = {V:.4f} V")
-    return DDResult(phi, Efn, Efp, True, total_iter, 0.0, V_reached=V)
+                                    message=f"bias ramp stalled at V = {V:.4f} V",
+                                    Efn_lo=None if lo is None else lo[0], Efp_lo=None if lo is None else lo[1])
+    return DDResult(phi, Efn, Efp, True, total_iter, 0.0, V_reached=V,
+                    Efn_lo=None if lo is None else lo[0], Efp_lo=None if lo is None else lo[1])
 
 
-def current_profile(prob: DDProblem, phi, Efn, Efp):
+def current_profile(prob: DDProblem, phi, Efn, Efp, lo=None):
     """
     Edge current densities [A/cm^2] and a current-conservation diagnostic.
 
     Returns (Jn, Jp, J_total, conservation_error) where conservation_error =
     (max J_total - min J_total) / max|J_total| over all edges -- ~0 for a
-    physically valid steady state (dJ/dx = 0).
+    physically valid steady state (dJ/dx = 0). lo: DDResult.lo of the state.
     """
-    G, H = prob.fluxes(phi, Efn, Efp)
+    G, H = prob.fluxes(phi, Efn, Efp, lo)
     Jn = _q * G
     Jp = _q * H
     Jt = Jn + Jp

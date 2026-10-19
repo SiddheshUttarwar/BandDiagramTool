@@ -70,3 +70,19 @@ def test_ingan_qw_detected_and_algan_unchanged():
     assert g.eps_xx[(i0 + i1) // 2] < 0          # compressive InGaN on GaN
     g_alg = build_grid([AbruptLayer(0.0, 50, n_doping=1e18), AbruptLayer(0.3, 25)], C, dx_nm=0.2)
     assert not np.any(g_alg.x_In)
+
+
+def test_strained_gap_stays_positive_up_to_InN():
+    """InGaN / AlInN strained to GaN keep a positive gap at every In
+    fraction (InN's V&M deformation potentials gave Eg = -0.40 eV), and the
+    AlInN valence band rises monotonically to the InN endpoint."""
+    from physics.polarization import compute_strain
+    for xa_of in (lambda y: 0.0, lambda y: 1.0 - y):
+        for y in np.linspace(0.0, 1.0, 21):
+            xa = xa_of(y)
+            p = get_nitride_params(xa, y)
+            exx, ezz = compute_strain(np.array([xa]), 0.0, np.array([y]), 0.0)
+            dEc, dEv = p.strain_band_shifts(float(exx[0]), float(ezz[0]))
+            assert p.Eg + dEc - dEv > 0.6
+    ev = [-(p.chi + p.Eg) for p in (get_nitride_params(1.0 - y, y) for y in np.linspace(0, 1, 41))]
+    assert np.all(np.diff(ev) > 0)

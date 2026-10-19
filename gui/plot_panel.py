@@ -553,15 +553,37 @@ class PlotPanel(QtWidgets.QWidget):
             if r.qcse_overlap is not None:
                 put("Overlap squared", f"{r.qcse_overlap:.4e}")
 
-        for title, energies in (("ELECTRON SUBBANDS", getattr(r, "E_e", None)),
-                                ("HOLE SUBBANDS (HH)", getattr(r, "E_h", None))):
-            if energies is None or len(energies) == 0:
-                continue
+        g_te = getattr(r, "gain_spectrum_cm1", None)
+        g_tm = getattr(r, "gain_TM_cm1", None)
+        if g_te is not None and r.gain_energy_eV is not None:
             lines.append("")
-            lines.append(f"{title}   [eV]")
-            vals = [f"{float(e):+9.4f}" for e in list(energies)[:12]]
+            lines.append("MATERIAL GAIN (8-band k.p, design well)")
+            for lab, gg in (("TE peak", g_te), ("TM peak", g_tm)):
+                if gg is not None and len(gg):
+                    i_pk = int(np.argmax(gg))
+                    put(lab, f"{float(gg[i_pk]):+.1f} cm^-1 at {float(r.gain_energy_eV[i_pk]):.4f} eV "
+                             f"({1239.84 / float(r.gain_energy_eV[i_pk]):.1f} nm)")
+
+        e_lv = getattr(r, "E_e", None)
+        if e_lv is not None and len(e_lv):
+            lines.append("")
+            lines.append("CONDUCTION LEVELS, k = 0 (8-band k.p)   [eV]")
+            vals = [f"{float(e):+9.4f}" for e in list(e_lv)[:12]]
             for i in range(0, len(vals), 6):
                 lines.append("  " + " ".join(vals[i:i + 6]))
+        h_lv = getattr(r, "E_h", None)
+        if h_lv is not None and len(h_lv):
+            char = getattr(r, "hole_character", None)
+            lines.append("")
+            lines.append("VALENCE LEVELS, k = 0 (8-band k.p)   [eV]   XY = heavy/light-hole-like, Z = crystal-field-like")
+            vals = []
+            for i, e in enumerate(list(h_lv)[:12]):
+                tag = ""
+                if char is not None and i < len(char):
+                    tag = "XY" if char[i][0] >= char[i][1] else "Z "
+                vals.append(f"{-float(e):+9.4f} {tag}")
+            for i in range(0, len(vals), 4):
+                lines.append("  " + "  ".join(vals[i:i + 4]))
 
         sig = getattr(r, "interface_sigmas", None)
         idx = getattr(r, "interface_indices", None)
@@ -673,12 +695,19 @@ class PlotPanel(QtWidgets.QWidget):
                f"  Status                    {'converged' if m.converged else 'NOT CONVERGED'}"
                + (f"   ({m.message})" if m.message else ""),
                f"  Photons absorbed          {100 * m.absorbed_fraction:.1f} % of those incident",
-               f"  Photovoltage              {m.photovoltage_V:+.4g} V   (top relative to bottom, zero current)",
-               f"  Short-circuit current     {m.J_short_A_cm2:.3e} A/cm^2   (residual at open circuit {m.J_residual_A_cm2:.1e})",
+               f"  Photovoltage              {m.photovoltage_V:+.4g} V   (top relative to bottom, zero current)"]
+        S = getattr(m, "surface_velocity_cm_s", None)
+        if S is None:
+            out.append(f"  Short-circuit current     {m.J_short_A_cm2:.3e} A/cm^2   (residual at open circuit {m.J_residual_A_cm2:.1e})")
+        else:
+            out.append(f"  Surface recombination     S = {S:.3g} cm/s   (current left {m.J_residual_A_cm2:.1e} A/cm^2)")
+        out += [
                f"  Ec at the surface         {float(d.Ec[-1]):+.3f} eV dark  ->  {float(l.Ec[-1]):+.3f} eV light"
                f"   (relative to the substrate Fermi level)",
                f"  Largest E_Fn - E_Fp       {float(split[k]):.3f} eV at z = {float(l.x_nm[k]):.1f} nm",
-               "  The top contact stands for the free surface; both quasi-Fermi levels are pinned together there."]
+               ("  The top contact stands for the free surface; both quasi-Fermi levels are pinned together there."
+                if S is None else
+                "  Free surface: its states recombine carriers at S and keep their dark occupancy (pinning).")]
         return out
 
     def show_light_bands(self, result) -> None:

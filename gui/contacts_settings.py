@@ -206,8 +206,8 @@ class SettingsPanel(widgets.Section):
         adv_layout.addLayout(self._row_entry("Max iterations", "max_iter", s.max_iter, cast=int))
         adv_layout.addLayout(self._row_entry("Tolerance", "tol", s.tol, unit="V"))
         adv_layout.addLayout(self._row_entry("Damping α", "alpha", s.alpha))
-        adv_layout.addLayout(self._row_entry("Electron subbands", "n_states_e", s.n_states_e, cast=int))
-        adv_layout.addLayout(self._row_entry("Hole subbands", "n_states_h", s.n_states_h, cast=int))
+        adv_layout.addLayout(self._row_entry("Electron levels shown", "n_states_e", s.n_states_e, cast=int))
+        adv_layout.addLayout(self._row_entry("Hole levels shown", "n_states_h", s.n_states_h, cast=int))
         adv_layout.addWidget(widgets.subhead("Recombination"))
         blank = "Leave blank to use each material's own value."
         for label, attr, unit, tip in (

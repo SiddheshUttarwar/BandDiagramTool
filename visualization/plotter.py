@@ -173,28 +173,14 @@ def _mott_background(ax, r: SolverResult) -> None:
 # Individual panels
 # ---------------------------------------------------------------------------
 
-# A quasi-Fermi level describes the occupation of a band by its carriers.
-# Where there are essentially none of them (fewer than this per cm^3) it
-# describes nothing: the drift-diffusion equations leave it undetermined to
-# within the arithmetic, and the solver's own convergence test ignores it
-# there (physics.dd_newton.newton_solve).
-QFL_MIN_DENSITY_CM3 = 1.0
-
-
 def quasi_fermi_levels_where_defined(r: SolverResult):
-    """(Efn, Efp) for drawing: under bias, each level only where its carrier
-    density is at least QFL_MIN_DENSITY_CM3 (NaN elsewhere, which matplotlib
-    leaves blank). So the electron level is drawn through the n side and as
-    far into the p side as electrons are injected, not as a line plunging to
-    the contact value across a region with no electrons; a device with no
-    holes shows no hole level. At equilibrium the two coincide with the
-    Fermi level, which is defined everywhere, and nothing is hidden."""
-    Efn = np.asarray(r.Efn, dtype=float)
-    Efp = np.asarray(r.Efp, dtype=float)
-    if abs(getattr(r, 'V_applied', 0.0)) < 1e-12 or np.allclose(Efn, Efp, atol=1e-9):
-        return Efn, Efp
-    return (np.where(np.asarray(r.n) >= QFL_MIN_DENSITY_CM3, Efn, np.nan),
-            np.where(np.asarray(r.p) >= QFL_MIN_DENSITY_CM3, Efp, np.nan))
+    """(Efn, Efp) for drawing: both levels over the whole device. They used
+    to be blanked wherever their carrier density was below 1 cm^-3, which in
+    wide-gap nitrides is nearly everywhere (undoped GaN barriers, holes in a
+    HEMT), so under bias whole levels vanished from the plot. The drift-
+    diffusion solve determines both levels at every node (exact equations,
+    double-double QFLs, physics.dd_newton), so they are drawn everywhere."""
+    return np.asarray(r.Efn, dtype=float), np.asarray(r.Efp, dtype=float)
 
 
 def plot_band_diagram(
@@ -356,16 +342,21 @@ def plot_wavefunctions(
                 ha='right', va='bottom', fontsize=7, color=color)
 
     n_h = min(n_show_h, len(r.E_h)) if r.E_h is not None else 0
+    char = getattr(r, 'hole_character', None)
     for k in range(n_h):
         psi2 = r.psi_h[k]**2
-        # Hole energies: E_h measured downward from Ev; in band diagram: Ev - E_h
-        Ev_avg = float(np.mean(r.Ev[r.Ev == np.max(r.Ev)]))
-        En_plot = float(np.max(r.Ev)) - r.E_h[k]
+        # E_h is in the inverted hole frame: the valence level is -E_h
+        # (physics.optical.hole_subband_energy). (The previous max(Ev) - E_h
+        # put every hole level ~|Ev| below where it belongs.)
+        En_plot = -float(r.E_h[k])
         psi2_norm = psi2 / (np.max(psi2) + 1e-30) * scale
         color = cmap_h(0.4 + 0.5 * k / max(n_h - 1, 1))
         ax.fill_between(x, En_plot - psi2_norm, En_plot, alpha=0.5, color=color)
         ax.axhline(En_plot, color=color, lw=0.8, ls='-', alpha=0.8)
-        ax.text(x[-1] * 0.98, En_plot - 0.01, f'$h_{k+1}$',
+        tag = ''
+        if char is not None and k < len(char):
+            tag = ' (XY)' if char[k][0] >= char[k][1] else ' (Z)'
+        ax.text(x[-1] * 0.98, En_plot - 0.01, f'$h_{k+1}${tag}={En_plot:.3f} eV',
                 ha='right', va='top', fontsize=7, color=color)
 
     if r.qcse_transition_eV is not None:

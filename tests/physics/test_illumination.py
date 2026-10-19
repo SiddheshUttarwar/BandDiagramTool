@@ -32,7 +32,7 @@ def test_light_below_the_gap_changes_nothing():
 def test_surface_depletion_flattens_at_open_circuit():
     """n-GaN with the surface pinned 1 eV below Ec: light reduces the band
     bending, no current flows, and the dark state is recovered far below."""
-    r = solve_illuminated(_n_gan())
+    r = solve_illuminated(_n_gan(), surface_velocity_cm_s=None)
     assert r.converged
     bend_dark = float(r.dark.Ec[-1] - r.dark.Ec[0])
     bend_light = float(r.light.Ec[-1] - r.light.Ec[0])
@@ -46,6 +46,21 @@ def test_surface_depletion_flattens_at_open_circuit():
 def test_photovoltage_collapses_at_growth_temperature():
     """At 1040 C the same surface passes so much thermal current that the
     photovoltage is negligible: the bands do not move."""
-    r = solve_illuminated(_n_gan(T=1313.15))
+    r = solve_illuminated(_n_gan(T=1313.15), surface_velocity_cm_s=None)
     assert r.converged and abs(r.photovoltage_V) < 1e-3
     assert abs(r.J_residual_A_cm2) < 1e-3 * abs(r.J_short_A_cm2)
+
+
+def test_free_surface_recombination_velocity():
+    """Free surface: no current anywhere, the surface photovoltage flattens
+    the depletion, and a slower surface keeps more of the splitting there."""
+    rs = {S: solve_illuminated(_n_gan(), surface_velocity_cm_s=S) for S in (1e2, 1e4, 1e6)}
+    for S, r in rs.items():
+        assert r.converged, (S, r.message)
+        assert abs(r.J_residual_A_cm2) < 1e-6
+        bend_dark = float(r.dark.Ec[-1] - r.dark.Ec[0])
+        bend_light = float(r.light.Ec[-1] - r.light.Ec[0])
+        assert 0.0 < bend_light < bend_dark
+        assert r.photovoltage_V == pytest.approx(bend_dark - bend_light, abs=1e-6)
+    split = {S: float(r.light.Efn[-1] - r.light.Efp[-1]) for S, r in rs.items()}
+    assert split[1e2] > split[1e4] > split[1e6] > 0.0

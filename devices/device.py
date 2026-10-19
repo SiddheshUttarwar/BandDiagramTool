@@ -132,8 +132,8 @@ class AlGaNDevice:
         V_applied  : applied voltage [V] (positive = forward bias)
         quantum    : use Schrödinger equation for carrier density
         method     : 'newton' (default) or 'pinn' (PyTorch PINN solver)
-        n_states_e : number of electron subbands (quantum mode)
-        n_states_h : number of hole subbands (quantum mode)
+        n_states_e : number of k = 0 conduction levels reported (quantum mode)
+        n_states_h : number of k = 0 valence levels reported (quantum mode)
         max_iter   : max SP iterations
         tol        : convergence threshold on phi [V]
         alpha      : mixing damping factor (0 < alpha ≤ 1)
@@ -147,7 +147,10 @@ class AlGaNDevice:
         SolverResult or PINNResult with all band diagram quantities
         """
         if method.lower() == 'pinn':
-            from physics.pinn_solver import solve_pinn
+            try:
+                from physics.pinn_solver import solve_pinn
+            except ImportError as e:   # PyTorch is optional (see requirements.txt)
+                raise ImportError("method='pinn' needs PyTorch: pip install torch") from e
             pinn_kwargs = {k: v for k, v in kwargs.items() if k in [
                 'n_colloc', 'n_hidden', 'n_neurons', 'n_epochs_adam', 
                 'n_epochs_lbfgs', 'lr_adam', 'lr_lbfgs', 'log_fn',

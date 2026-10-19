@@ -105,17 +105,6 @@ _OUTER_STAGNATION_PATIENCE = 15
 # floating-point/PTC-retry jitter) and reset the stagnation counter.
 _OUTER_STAGNATION_MIN_IMPROVEMENT = 0.99
 
-# R_series fast path (see _solve_bias_with_series_resistance): number of
-# damped fixed-point iterations tried before giving up and falling back to
-# the slower, more robust bisection-with-jitter. nextnano++ doesn't even
-# solve this inside the device physics at all -- it sweeps V_internal and
-# applies R_series as post-hoc arithmetic on the resulting J-V curve (see
-# this session's nextnano++ documentation research) -- so a handful of
-# fixed-point iterations to hit one specific target V_applied is already
-# more work than nextnano's own approach, not less.
-_R_SERIES_FIXED_POINT_MAXITER = 8
-
-
 class _AndersonMixer:
     """
     Anderson Acceleration (type-I) for fixed-point iteration  x = g(x).
@@ -714,96 +703,83 @@ def _solve_bias_with_series_resistance(
     def _clamp(v: float, a: float, b: float) -> float:
         return min(max(v, min(a, b)), max(a, b))
 
-    # Fast path: damped fixed-point iteration directly on
-    #   V_internal = V_applied - |J(V_internal)| * R_series
-    # instead of bisecting a search bracket. This is the natural fast
-    # analogue of nextnano++'s own approach (see this function's docstring
-    # update above): each iteration is one direct solve, converging in a
-    # handful of steps for a smooth I-V curve, versus bisection's up to 30
-    # iterations x 5 jittered retries = up to 150 solves. Falls straight
-    # through to the existing bisection below (seeded with whatever partial
-    # progress this made) the moment a trial fails to converge or the gap
-    # stops improving -- never trusted past that point, so it can't make
-    # a hard device any less robust than before, only faster on easy ones.
-    V_internal = V_applied
-    damping = 0.5
-    prev_gap = None
-    for it in range(_R_SERIES_FIXED_POINT_MAXITER):
-        if cancel_check is not None and cancel_check():
-            raise SolveCancelled("Solve cancelled by user")
-        res = eval_at(V_internal)
-        if not res.converged:
-            if verbose:
-                _log(f"  R_series fixed-point iter {it+1}: V_internal={V_internal:.4f} "
-                     f"did not converge -- falling back to bisection")
-            break
-
-        J = _current_density_from_result(res, grid)
-        implied_V_applied = V_internal + s * abs(J) * R_series
-        gap = implied_V_applied - V_applied
-        if verbose:
-            _log(f"  R_series fixed-point iter {it+1}: V_internal={V_internal:.4f}  "
-                 f"J={J:.4e} A/cm^2  implied V_applied={implied_V_applied:.4f} "
-                 f"(target {V_applied:.4f})")
-        if best is None or abs(gap) < best[0]:
-            best = (abs(gap), res, V_internal)
-        if abs(gap) < gap_tol:
-            return _dc_replace(res, V_applied=V_applied, V_internal=V_internal, converged=True)
-
-        if prev_gap is not None and abs(gap) >= abs(prev_gap):
-            # Not improving -- shrink damping (adaptive, same principle as
-            # the Gummel solver's own auto-shrinking alpha) rather than
-            # trusting a step that isn't working.
-            damping = max(damping * 0.5, 0.05)
-        prev_gap = gap
-
-        V_internal_target = V_applied - s * abs(J) * R_series
-        V_internal = _clamp(V_internal + damping * (V_internal_target - V_internal), V_lo_b, V_hi_b)
-    else:
-        if verbose:
-            _log(f"  R_series fixed-point path used its full budget "
-                 f"({_R_SERIES_FIXED_POINT_MAXITER} iters) without converging "
-                 f"-- falling back to bisection")
-
-    lo, hi = 0.0, V_applied
+    # Root of f(V) = V + s|J(V)| R - V_applied on [0, V_applied]. f is
+    # monotonic (|J| grows with |V|), f(0) = -V_applied and f(V_applied) >= 0,
+    # so the bracket always holds the root. Each step solves the diode model
+    # |J| = |J_b| exp(k (V - V_b)) through the two most recent solves (a
+    # secant on ln|J|, i.e. Newton with the measured differential
+    # conductance) exactly for f = 0, and falls back to halving the bracket
+    # when that step leaves it or fails to shrink it.
+    # (It replaces a damped fixed-point iteration V <- V_applied - |J(V)| R,
+    # which converges only while R dJ/dV < 1: past turn-on R dJ/dV is
+    # 10-1000, so it always failed and handed over to plain bisection, 17-30
+    # complete solves per bias point -- confirmed on the GaN p-n template,
+    # R = 0.2 Ohm cm^2 at 4 V: 17 solves; with k.p on an LED each solve takes
+    # minutes and the GUI never finished.)
+    lo, hi = V_lo_b, V_hi_b               # in V, ordered; f(lo) <= 0 <= f(hi) in the s-oriented sense
+    pts = []                              # (V, ln|J|) of converged trials
+    V_try = V_applied
     for it in range(30):
         if cancel_check is not None and cancel_check():
             raise SolveCancelled("Solve cancelled by user")
-        V_mid = 0.5 * (lo + hi)
-        # A failed trial is patchy-solver noise, not evidence V_mid itself
-        # is on the wrong side of the root (this device's fresh-solve
-        # convergence is known to be sparse/unpredictable across bias, not
-        # systematically worse at higher V -- see today's MQW-device
-        # findings). Nudge by small jittered offsets before ever touching
-        # the bracket, so an isolated non-convergent point can't wrongly
-        # collapse lo/hi the way treating it as "too high" did.
-        res = None
-        for jitter in (0.0, 0.01, -0.01, 0.03, -0.03):
-            V_try = _clamp(V_mid + jitter * (hi - lo), lo, hi)
-            res = eval_at(V_try)
-            if res.converged:
-                break
-        if res is None or not res.converged:
+        res = eval_at(V_try)
+        if not res.converged:
             if verbose:
-                _log(f"  R_series bisection iter {it+1:2d}: V_internal~{V_mid:.4f} "
-                     f"did not converge (incl. jittered retries); skipping")
+                _log(f"  R_series step {it+1}: V_internal={V_try:.4f} did not converge; halving the bracket")
+            # a failed trial says nothing about the side of the root: shrink
+            # towards the end that is known to converge (V_internal = 0 side)
+            if s > 0:
+                hi = V_try
+            else:
+                lo = V_try
+            V_try = 0.5 * (lo + hi)
             continue
-
         J = _current_density_from_result(res, grid)
         implied_V_applied = V_try + s * abs(J) * R_series
         gap = implied_V_applied - V_applied
         if verbose:
-            _log(f"  R_series bisection iter {it+1:2d}: V_internal={V_try:.4f}  "
-                 f"J={J:.4e} A/cm^2  implied V_applied={implied_V_applied:.4f} "
-                 f"(target {V_applied:.4f})")
+            _log(f"  R_series step {it+1}: V_internal={V_try:.4f}  J={J:.4e} A/cm^2  "
+                 f"implied V_applied={implied_V_applied:.4f} (target {V_applied:.4f})")
         if best is None or abs(gap) < best[0]:
             best = (abs(gap), res, V_try)
-        if abs(gap) < max(tol * 10.0, 1e-4):
+        if abs(gap) < gap_tol:
             break
-        if s * implied_V_applied > s * V_applied:
-            hi = V_try
+        if s * gap > 0:                   # too much bias inside: root below V_try (s-oriented)
+            if s > 0:
+                hi = V_try
+            else:
+                lo = V_try
         else:
-            lo = V_try
+            if s > 0:
+                lo = V_try
+            else:
+                hi = V_try
+        if abs(J) > 0.0:
+            pts.append((V_try, float(np.log(abs(J)))))
+        V_next = None
+        if len(pts) >= 2 and pts[-1][0] != pts[-2][0]:
+            (Va_, la), (Vb_, lb) = pts[-2], pts[-1]
+            k = (lb - la) / (Vb_ - Va_)
+            # solve V + s R |J_b| exp(k (V - Vb_)) = V_applied by Newton (monotone in V)
+            V = Vb_
+            for _ in range(60):
+                e = s * R_series * np.exp(min(lb + k * (V - Vb_), 700.0))
+                g = V + e - V_applied
+                dg = 1.0 + k * e
+                if dg == 0.0:
+                    break
+                step = g / dg
+                V -= step
+                if abs(step) < 1e-9:
+                    break
+            if np.isfinite(V) and lo < V < hi:
+                V_next = V
+        elif len(pts) == 1:
+            # one point: probe 2 % of the bracket below it for the slope
+            V_next = V_try - 0.02 * (hi - lo) if s > 0 else V_try + 0.02 * (hi - lo)
+        if V_next is None or not (lo < V_next < hi):
+            V_next = 0.5 * (lo + hi)
+        V_try = V_next
 
     if best is None:
         # Every single trial failed to converge -- return an honest failure

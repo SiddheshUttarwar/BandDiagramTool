@@ -569,5 +569,11 @@ reference names its sources. The main ones:
 
 ## Licence
 
-No licence has been chosen yet. Until one is added, the code is published for reading and
-evaluation only.
+EpiBand is free to **use**: anyone may download and run the compiled programs from the
+[Releases page](https://github.com/SiddheshUttarwar/BandDiagramTool/releases) for research,
+teaching or any other purpose, and the results are theirs to publish (please cite EpiBand).
+
+The **source code** is published for reading and checking the model only. It may not be copied,
+modified, reused in other software, or redistributed without written permission. The compiled
+programs may not be redistributed either; share the link to the Releases page. See
+[LICENSE](LICENSE) for the full terms.

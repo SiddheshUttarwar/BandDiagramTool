@@ -1,0 +1,52 @@
+EpiBand Licence
+
+Copyright (c) 2025-2026 Siddhesh Uttarwar. All rights reserved.
+
+This licence covers EpiBand: the source code in this repository and the
+compiled programs published on its Releases page.
+
+1. Using the program
+
+   You may download, install and run the compiled EpiBand programs published
+   on the official Releases page
+   (https://github.com/SiddheshUttarwar/BandDiagramTool/releases), free of
+   charge, for research, teaching and any other purpose.
+
+   Results you obtain with the program (band diagrams, carrier densities,
+   data files, figures) are yours to use, including in publications, theses
+   and presentations. Please cite EpiBand, for example:
+   "EpiBand, https://github.com/SiddheshUttarwar/BandDiagramTool".
+
+2. The source code
+
+   The source code is published so that the model can be read and checked
+   (see also the model reference at
+   https://siddheshuttarwar.github.io/BandDiagramTool/). No other right is
+   granted. Without prior written permission of the copyright holder you may
+   not:
+
+   a. copy, modify, translate or adapt the source code, in whole or in part;
+   b. use the source code, or any part of it, in other software, scripts,
+      libraries or services, whether open source, academic or commercial;
+   c. distribute, publish, sublicense or sell the source code or any work
+      derived from it;
+   d. redistribute the compiled programs (share the link to the Releases
+      page instead), or reverse engineer, decompile or modify them.
+
+   Viewing the repository, and the forking that GitHub's Terms of Service
+   permit within GitHub, do not grant any of these rights.
+
+3. No warranty
+
+   EpiBand is provided "as is", without warranty of any kind, express or
+   implied, including fitness for a particular purpose. Its validation is
+   documented in the model reference and is limited; you are responsible for
+   checking results before relying on them. In no event shall the copyright
+   holder be liable for any claim, damages or other liability arising from
+   the use of the program or its results.
+
+4. Permission
+
+   For any use not allowed above, including using parts of the code or
+   collaborating on it, contact the copyright holder through
+   https://github.com/SiddheshUttarwar.

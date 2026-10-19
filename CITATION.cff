@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use EpiBand in your work, please cite it as below."
+title: "EpiBand: a one-dimensional 8-band k·p Schrödinger-Poisson-drift-diffusion solver for III-V heterostructures"
+type: software
+authors:
+  - family-names: Uttarwar
+    given-names: Siddhesh
+version: 1.2.0
+date-released: 2026-10-19
+url: "https://siddheshuttarwar.github.io/BandDiagramTool/"
+repository-code: "https://github.com/SiddheshUttarwar/BandDiagramTool"
+license-url: "https://github.com/SiddheshUttarwar/BandDiagramTool/blob/main/LICENSE"
+keywords:
+  - III-nitride
+  - band diagram
+  - k·p
+  - Schrödinger-Poisson
+  - drift-diffusion
+  - polarization
+  - semiconductor heterostructures

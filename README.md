@@ -55,6 +55,7 @@ the Python API need the source install below.
 - [Tests](#tests)
 - [Repository layout](#repository-layout)
 - [Sources](#sources)
+- [How to cite](#how-to-cite)
 - [Licence](#licence)
 
 ## The mathematics
@@ -567,11 +568,36 @@ reference names its sources. The main ones:
 - Alberi and Scarpulla (2018) and the North Carolina State University papers of Bryan, Reddy,
   Klump and co-workers (2014–2020): defect formation under illumination
 
+## How to cite
+
+If EpiBand contributes to a paper, thesis or presentation, please cite it:
+
+> S. Uttarwar, *EpiBand: a one-dimensional 8-band k·p Schrödinger–Poisson–drift-diffusion solver
+> for III-V heterostructures*, version 1.2.0 (2026).
+> https://github.com/SiddheshUttarwar/BandDiagramTool
+
+```bibtex
+@software{uttarwar_epiband,
+  author  = {Uttarwar, Siddhesh},
+  title   = {{EpiBand}: a one-dimensional 8-band k.p
+             {Schr\"odinger}--{Poisson}--drift-diffusion solver for {III-V} heterostructures},
+  version = {1.2.0},
+  year    = {2026},
+  url     = {https://github.com/SiddheshUttarwar/BandDiagramTool},
+  note    = {Model reference: https://siddheshuttarwar.github.io/BandDiagramTool/}
+}
+```
+
+Please state the version you used (it is in the release name) and, where it matters, the model
+options (quantum model, polarization set, bias model). GitHub's **Cite this repository** button
+gives the same reference in other formats.
+
 ## Licence
 
 EpiBand is free to **use**: anyone may download and run the compiled programs from the
 [Releases page](https://github.com/SiddheshUttarwar/BandDiagramTool/releases) for research,
-teaching or any other purpose, and the results are theirs to publish (please cite EpiBand).
+teaching or any other purpose, and the results are theirs to publish (please cite EpiBand, see
+[How to cite](#how-to-cite)).
 
 The **source code** is published for reading and checking the model only. It may not be copied,
 modified, reused in other software, or redistributed without written permission. The compiled

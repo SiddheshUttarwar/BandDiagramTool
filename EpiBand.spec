@@ -7,7 +7,10 @@
 # Output: dist/EpiBand/EpiBand.exe, in a folder with its
 # libraries (start-up is much faster than a single-file .exe, which unpacks
 # itself on every launch). Zip that folder to distribute it.
+# On macOS the same recipe also makes dist/EpiBand.app (built on a Mac: see
+# .github/workflows/macos.yml; PyInstaller does not cross-compile).
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files
 
@@ -22,6 +25,10 @@ from PIL import Image  # noqa: E402
 _png = os.path.join('build', 'icon.png')
 theme.logo_pixmap(256).save(_png)
 Image.open(_png).save(ICON, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+MACOS = sys.platform == 'darwin'
+if MACOS:
+    theme.logo_pixmap(1024).save(_png)
+    ICON = _png                      # PyInstaller converts it to .icns (needs Pillow)
 
 datas = collect_data_files('scienceplots')      # the plot style sheets
 
@@ -65,3 +72,11 @@ coll = COLLECT(
     upx=False,
     name='EpiBand',
 )
+if MACOS:
+    app = BUNDLE(
+        coll,
+        name='EpiBand.app',
+        icon=ICON,
+        bundle_identifier='io.github.siddheshuttarwar.epiband',
+        info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.2.0'},
+    )

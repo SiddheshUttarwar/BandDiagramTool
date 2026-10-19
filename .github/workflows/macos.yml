@@ -1,0 +1,76 @@
+# Build EpiBand.app for macOS (Apple Silicon and Intel), check it with the
+# built-in self-test (solves the HEMT template), and attach the zips to a
+# GitHub release. PyInstaller cannot cross-compile, so this runs on GitHub's
+# macOS machines.
+#
+# Runs when a release is published, or by hand (Actions > macOS build > Run
+# workflow) with the tag of an existing release to attach to.
+name: macOS build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the zips to (e.g. v1.2.0); empty = build only"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14        # Apple Silicon (arm64)
+            arch: arm64
+          - runner: macos-13        # Intel (x86_64)
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+
+      - name: Build EpiBand.app
+        run: pyinstaller --noconfirm EpiBand.spec
+
+      - name: Self-test the built app (solves the HEMT template)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export EPIBAND_SELFTEST="$PWD/selftest.txt"
+          dist/EpiBand.app/Contents/MacOS/EpiBand &
+          pid=$!
+          for i in $(seq 1 120); do
+            [ -f selftest.txt ] && break
+            sleep 2
+          done
+          kill $pid 2>/dev/null || true
+          cat selftest.txt
+          grep -q "^OK converged=True" selftest.txt
+
+      - name: Zip
+        run: ditto -c -k --keepParent dist/EpiBand.app EpiBand-macos-${{ matrix.arch }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EpiBand-macos-${{ matrix.arch }}
+          path: EpiBand-macos-${{ matrix.arch }}.zip
+
+      - name: Attach to the release
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name || inputs.tag }}" EpiBand-macos-${{ matrix.arch }}.zip --clobber

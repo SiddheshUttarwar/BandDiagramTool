@@ -22,7 +22,7 @@ from physics.materials.algan import (
     donor_ionization_energy, acceptor_ionization_energy,
 )
 from physics.materials.alloys import (
-    WURTZITE, ZINCBLENDE, RECOMBINATION_KEYS, crystal_of, get_params, mobilities,
+    MONOCLINIC, WURTZITE, ZINCBLENDE, RECOMBINATION_KEYS, crystal_of, get_params, mobilities,
     recombination_coefficients,
 )
 from physics.grid_utils import central_difference
@@ -136,6 +136,10 @@ class GridData:
     # the group-V sublattice (physics.materials.alloys) ---
     crystal: str = 'wurtzite'
     x_P: Optional[np.ndarray] = None
+    # Per-node crystal system. A nitride stack may contain beta-Ga2O3
+    # layers (heteroepitaxy); `crystal` is then 'wurtzite' and this array
+    # says which nodes are oxide. None means every node is `crystal`.
+    crystal_nodes: Optional[np.ndarray] = None
 
     # --- Dopant ionization energies [eV] and low-field mobilities [cm^2/Vs]
     # at each node. None on a GridData built by hand: the solvers then fall
@@ -213,6 +217,7 @@ def build_grid(
     include_strain_band_shift: bool = True,
     polarity: str = 'metal',
     polarization_model: str = 'ambacher2002',
+    polarization_scale: float = 1.0,
     recombination: Optional[dict] = None,
 ) -> GridData:
     """
@@ -277,6 +282,7 @@ def build_grid(
     relaxed_list = []
     custom_strain_list = []   # per-point custom eps_xx, NaN where unset (see AbruptLayer.custom_strain_xx)
     x_nm_list  = []
+    crystal_list = []
     physical_layers = []   # layers filtered to Abrupt/Graded only, parallel to *_list above
 
     # Zero-thickness interface layers don't consume grid points -- their
@@ -331,17 +337,30 @@ def build_grid(
             np.full(n_pts, custom_strain_xx if custom_strain_xx is not None else np.nan)
         )
         x_nm_list.append(pos_nm + np.arange(n_pts) * layer_dx_nm)
+        crystal_list.append(np.full(n_pts, crystal_of(getattr(layer, 'material', None)), dtype=object))
         pos_nm += n_pts * layer_dx_nm
 
     if not physical_layers:
         raise ValueError("Device stack has no physical (Abrupt/Graded) layers.")
 
     crystals = {crystal_of(getattr(layer, 'material', None)) for layer in physical_layers}
-    if len(crystals) > 1:
-        raise ValueError("The stack mixes wurtzite nitride layers with zincblende "
-                         "arsenide/phosphide layers; use one crystal system.")
-    crystal = crystals.pop()
-    cubic = crystal == ZINCBLENDE
+    # Nitrides and beta-Ga2O3 may share a stack (Ga2O3 grown on AlGaN or
+    # the reverse); zincblende layers cannot be mixed with either.
+    mixed = len(crystals) > 1
+    if mixed and crystals != {WURTZITE, MONOCLINIC}:
+        raise ValueError("The stack mixes zincblende arsenide/phosphide layers with another crystal "
+                         "system; use one crystal system (only nitrides and Ga2O3 can share a stack).")
+    crystal = WURTZITE if mixed else crystals.pop()
+    cryst = np.concatenate(crystal_list)
+    # Zincblende (001) and monoclinic beta-Ga2O3 (010): one parameter object
+    # per node and no polarization. Only the wurtzite nitrides are polar.
+    nonpolar = crystal != WURTZITE
+    oxide = cryst == MONOCLINIC
+    # Contiguous runs of one crystal system, [start, end). Across a change
+    # of crystal the epitaxy is incoherent: composition is not blended and
+    # strain restarts from the first layer of the run.
+    _cuts = [0] + [i + 1 for i in range(len(cryst) - 1) if cryst[i] != cryst[i + 1]] + [len(cryst)]
+    segments = list(zip(_cuts[:-1], _cuts[1:]))
 
     x_Al_raw = np.concatenate(x_Al_list)
     x_In_raw = np.concatenate(x_In_list)
@@ -378,7 +397,7 @@ def build_grid(
             xa = 0.5 * (layer.x_Al_start + layer.x_Al_end)
             xi = 0.5 * (getattr(layer, 'x_In_start', 0.0) + getattr(layer, 'x_In_end', 0.0))
             xp = 0.5 * (getattr(layer, 'x_P_start', 0.0) + getattr(layer, 'x_P_end', 0.0))
-        return get_params(crystal, xa, xi, xp).Eg
+        return get_params(crystal_of(getattr(layer, 'material', None)), xa, xi, xp).Eg
 
     def _layer_undoped(layer) -> bool:
         return layer.n_doping <= 0.0 and layer.p_doping <= 0.0
@@ -445,13 +464,22 @@ def build_grid(
     # whenever grid density varies layer-to-layer -- which auto-refinement
     # now makes the common case, not the rare one.
     from scipy.ndimage import gaussian_filter1d
-    x_Al = gaussian_filter1d(x_Al_raw, sigma=1.0)
+
+    def _smooth(raw):
+        # within each crystal run only: Al in Ga2O3 does not blend into AlGaN
+        if len(segments) == 1:
+            return gaussian_filter1d(raw, sigma=1.0)
+        out = np.empty_like(raw)
+        for a, b in segments:
+            out[a:b] = gaussian_filter1d(raw[a:b], sigma=1.0, mode='nearest')
+        return out
+    x_Al = _smooth(x_Al_raw)
     x_Al = np.clip(x_Al, 0.0, 1.0)
-    x_In = np.clip(gaussian_filter1d(x_In_raw, sigma=1.0), 0.0, 1.0) if np.any(x_In_raw)         else np.zeros_like(x_Al)
+    x_In = np.clip(_smooth(x_In_raw), 0.0, 1.0) if np.any(x_In_raw)         else np.zeros_like(x_Al)
     _has_In = bool(np.any(x_In > 0))
-    x_P = (np.clip(gaussian_filter1d(x_P_raw, sigma=1.0), 0.0, 1.0) if np.any(x_P_raw)
+    x_P = (np.clip(_smooth(x_P_raw), 0.0, 1.0) if np.any(x_P_raw)
            else np.zeros_like(x_Al))
-    if cubic:
+    if nonpolar:
         # the smoothing must not push a blended interface node past x_Al + x_In = 1
         over = np.maximum(x_Al + x_In, 1.0)
         x_Al, x_In = x_Al / over, x_In / over
@@ -473,7 +501,7 @@ def build_grid(
     # --- Strain ---
     x_sub = float(x_Al[0])   # substrate = bottom layer composition
     x_In_sub = float(x_In[0])
-    if cubic:
+    if nonpolar:
         # Zincblende on (001): the same pseudomorphic relation, with
         # eps_zz = -2 (c12/c11) eps_xx (the parameter object stores c12, c11
         # as C13, C33). One parameter set per node, reused below.
@@ -482,6 +510,24 @@ def build_grid(
         poisson = np.array([2.0 * p.C13 / p.C33 for p in zb])
         eps_xx = (a_layer[0] - a_layer) / a_layer
         eps_zz = -poisson * eps_xx
+    elif mixed:
+        # Each crystal run is coherent to its own first layer: a nitride run
+        # pseudomorphic to the bottom of the run, an oxide run by the (010)
+        # relation on its own lattice.
+        zb = [get_params(MONOCLINIC, x_Al[i], T=T) if oxide[i] else None for i in range(N)]
+        eps_xx = np.zeros(N)
+        eps_zz = np.zeros(N)
+        poisson = np.full(N, np.nan)
+        for a, b in segments:
+            if oxide[a]:
+                a_layer = np.array([zb[i].a0 for i in range(a, b)])
+                poisson[a:b] = [2.0 * zb[i].C13 / zb[i].C33 for i in range(a, b)]
+                eps_xx[a:b] = (a_layer[0] - a_layer) / a_layer
+                eps_zz[a:b] = -poisson[a:b] * eps_xx[a:b]
+            else:
+                exx, ezz = (compute_strain(x_Al[a:b], float(x_Al[a]), x_In[a:b], float(x_In[a])) if _has_In
+                            else compute_strain(x_Al[a:b], float(x_Al[a])))
+                eps_xx[a:b], eps_zz[a:b] = exx, ezz
     else:
         eps_xx, eps_zz = (compute_strain(x_Al, x_sub, x_In, x_In_sub) if _has_In
                           else compute_strain(x_Al, x_sub))
@@ -496,8 +542,14 @@ def build_grid(
     has_custom = ~np.isnan(custom_strain_xx)
     if np.any(has_custom):
         eps_xx[has_custom] = custom_strain_xx[has_custom]
-        if cubic:
+        if nonpolar:
             eps_zz[has_custom] = -poisson[has_custom] * eps_xx[has_custom]
+        elif mixed:
+            ox_c, nit_c = has_custom & oxide, has_custom & ~oxide
+            eps_zz[ox_c] = -poisson[ox_c] * eps_xx[ox_c]
+            if np.any(nit_c):
+                eps_zz[nit_c] = eps_zz_from_eps_xx(x_Al[nit_c], eps_xx[nit_c],
+                                                   x_In[nit_c] if _has_In else None)
         else:
             eps_zz[has_custom] = eps_zz_from_eps_xx(x_Al[has_custom], eps_xx[has_custom],
                                                     x_In[has_custom] if _has_In else None)
@@ -513,7 +565,8 @@ def build_grid(
     mu_n_arr = np.empty(N)
     mu_p_arr = np.empty(N)
     for i in range(N):
-        if cubic:
+        node_nonpolar = nonpolar or oxide[i]
+        if node_nonpolar:
             p = zb[i]
         else:
             p = (get_nitride_params_T(x_Al[i], x_In[i], T) if x_In[i] > 0
@@ -530,7 +583,7 @@ def build_grid(
         eps_r[i] = p.eps_r
         # Confinement mass: the nitride conduction band is isotropic; a
         # zincblende alloy uses the growth-direction mass of its lowest valley.
-        m_e[i]   = p.m_e_par if cubic else p.m_e_dos
+        m_e[i]   = p.m_e_par if node_nonpolar else p.m_e_dos
         m_hh[i]  = p.m_hh
         # dEv_lh/dEv_so and m_lh/m_so come from the same call: past the
         # LH/SO character crossover (see AlGaNParams.valence_band_structure),
@@ -538,16 +591,16 @@ def build_grid(
         # offset -- fetching mass and offset separately here would silently
         # decouple them.
         dEv_hh[i], dEv_lh[i], dEv_so[i], m_lh[i], m_so[i] = p.valence_offsets_from_top(exx_i, ezz_i)
-        Nc_arr[i] = p.Nc(T, exx_i, ezz_i) if cubic else p.Nc(T)
+        Nc_arr[i] = p.Nc(T, exx_i, ezz_i) if node_nonpolar else p.Nc(T)
         Nv_arr[i] = p.Nv(T, exx_i, ezz_i)
-        if cubic:
+        if node_nonpolar:
             Ed_arr[i], Ea_arr[i], mu_n_arr[i], mu_p_arr[i] = p.Ed, p.Ea, p.mu_n, p.mu_p
         else:
             Ed_arr[i] = donor_ionization_energy(x_Al[i], x_In[i])
             Ea_arr[i] = acceptor_ionization_energy(x_Al[i], x_In[i])
             mu_n_arr[i], mu_p_arr[i] = mobilities(crystal, x_Al[i])
         rec_i = ({'tau_n': p.tau_srh, 'tau_p': p.tau_srh, 'B_rad': p.B_rad,
-                  'C_n': p.C_aug, 'C_p': p.C_aug} if cubic
+                  'C_n': p.C_aug, 'C_p': p.C_aug} if node_nonpolar
                  else recombination_coefficients(crystal, x_Al[i], x_In[i]))
         for k in RECOMBINATION_KEYS:
             rec_arr[k][i] = recombination.get(k, rec_i[k])
@@ -561,19 +614,34 @@ def build_grid(
     if polarity not in ('metal', 'N'):
         raise ValueError(f"polarity must be 'metal' or 'N', got {polarity!r}")
     _psign = -1.0 if polarity == 'N' else 1.0
-    if cubic:
+    if nonpolar:
         # Zincblende on (001): no spontaneous polarization, and biaxial
         # strain produces no piezoelectric polarization (only e14, shear).
+        # beta-Ga2O3 is centrosymmetric (C2/m): no polarization at all.
         Psp_arr = np.zeros(N)
         Ppz_arr = np.zeros(N)
     else:
         Psp_arr = _psign * compute_Psp(x_Al, T, _xin, model=polarization_model)
         Ppz_arr = _psign * compute_Ppz(x_Al, eps_xx, eps_zz, _xin, model=polarization_model)
+        # beta-Ga2O3 is not polar. The nitride polarization ends at the
+        # oxide, leaving its bound sheet charge (-dP/dz) at the interface.
+        Psp_arr[oxide] = 0.0
+        Ppz_arr[oxide] = 0.0
+        # fraction of the theoretical polarization (measured InGaN well
+        # fields are often ~half of it)
+        Psp_arr *= polarization_scale
+        Ppz_arr *= polarization_scale
     P_total = Psp_arr + Ppz_arr
     P_charge = P_total if include_spontaneous_polarization else Ppz_arr
     pol_rho = compute_pol_charge(P_charge, dx_edges_m)
-    F_quasi = (central_difference(np.array([p.chi for p in zb]), dx_edges_m) if cubic
-               else compute_quasi_field(x_Al, dx_edges_m, _xin))
+    if mixed:
+        chi_unstrained = np.array([zb[i].chi if oxide[i] else
+                                   (get_nitride_params(x_Al[i], x_In[i]) if x_In[i] > 0
+                                    else get_AlGaN_params(x_Al[i])).chi for i in range(N)])
+        F_quasi = central_difference(chi_unstrained, dx_edges_m)
+    else:
+        F_quasi = (central_difference(np.array([p.chi for p in zb]), dx_edges_m) if nonpolar
+                   else compute_quasi_field(x_Al, dx_edges_m, _xin))
 
     # --- Interface dipoles (devices.layer.InterfaceDipole) ---
     # A fixed structural dipole: two equal-and-opposite sheet charges
@@ -608,7 +676,12 @@ def build_grid(
         i0 = int(np.clip(np.searchsorted(x_nm, pos_nm_surf), 0, N - 1))
         surface_charge_sites.append((i0, surf.states))
 
-    ifaces  = [] if cubic else interface_sheet_charges(P_charge, x_Al, x_In=_xin)
+    ifaces  = [] if nonpolar else interface_sheet_charges(P_charge, x_Al, x_In=_xin)
+    if mixed:
+        # a nitride/oxide boundary is an interface whatever the Al fractions
+        known = {i for i, _ in ifaces}
+        ifaces += [(b - 1, float(P_charge[b - 1] - P_charge[b])) for _, b in segments[:-1] if b - 1 not in known]
+        ifaces.sort()
     iface_idx   = [idx for idx, _ in ifaces]
     iface_sigma = [sig for _, sig in ifaces]
 
@@ -696,7 +769,7 @@ def build_grid(
         manual_quantum_region=manual_quantum_region,
         surface_charge_sites=surface_charge_sites,
         x_In=x_In,
-        crystal=crystal, x_P=x_P,
+        crystal=crystal, x_P=x_P, crystal_nodes=(cryst if mixed else None),
         Ed=Ed_arr, Ea=Ea_arr, mu_n=mu_n_arr, mu_p=mu_p_arr,
         **rec_arr,
     )

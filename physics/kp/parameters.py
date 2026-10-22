@@ -80,7 +80,7 @@ from typing import Optional
 
 import numpy as np
 
-from physics.materials.alloys import ZINCBLENDE, get_params
+from physics.materials.alloys import MONOCLINIC, ZINCBLENDE, get_params
 
 HB = 0.0380998212        # hbar^2 / 2 m0 [eV nm^2]
 S_MIN = 1.0              # Foreman: smallest allowed |S> k^2 coefficient [HB units]
@@ -153,7 +153,19 @@ def node_params(crystal: str, x_Al: float, x_In: float, x_P: float, T: float,
     edge, 0 except in an indirect zincblende alloy)."""
     p = get_params(crystal, x_Al, x_In, x_P, T)
     out = {}
-    if crystal == ZINCBLENDE:
+    if crystal == MONOCLINIC:
+        # beta-Ga2O3: the uncoupled limit (P = 0) -- a parabolic conduction
+        # band of mass m_e and three degenerate isotropic hole bands of mass
+        # m_hh (gamma1 = 1/m_hh, gamma2 = gamma3 = 0), no spin-orbit split.
+        g1 = 1.0 / float(p.m_hh)
+        Lp = -HB * (g1 + 1.0)
+        out.update(P1=0.0, P2=0.0, A1p=HB * (1.0 / p.m_e_par - 1.0), A2p=HB * (1.0 / p.m_e_perp - 1.0),
+                   L1p=Lp, L2p=Lp, M1=Lp, M2=Lp, M3=Lp, N1p=0.0, N2p=0.0, N3=0.0)
+        D = 0.0
+        XY0 = Z0 = 0.0
+        out['dEcG'] = 0.0
+        out['Ep_used'], out['Ep_table'] = 0.0, 0.0
+    elif crystal == ZINCBLENDE:
         from physics.materials.zincblende import _BIN, _interp, _weights, _check_comp
         x, y, v = _check_comp(x_Al, x_In, x_P)
         f, g = _weights(x, y, v)
@@ -219,6 +231,7 @@ def build_kp_static(g, i0: int = 0, i1: Optional[int] = None, T: Optional[float]
     i1 = g.N if i1 is None else i1
     T = g.T if T is None else T
     crystal = getattr(g, 'crystal', 'wurtzite')
+    nodes = getattr(g, 'crystal_nodes', None)
     xin = getattr(g, 'x_In', None)
     xp = getattr(g, 'x_P', None)
     cache = {}
@@ -227,9 +240,10 @@ def build_kp_static(g, i0: int = 0, i1: Optional[int] = None, T: Optional[float]
         key = (round(float(g.x_Al[i]), 6), round(float(xin[i]) if xin is not None else 0.0, 6),
                round(float(xp[i]) if xp is not None else 0.0, 6),
                round(float(g.eps_xx[i]), 9), round(float(g.eps_zz[i]), 9))
-        if key not in cache:
-            cache[key] = node_params(crystal, key[0], key[1], key[2], T, key[3], key[4])
-        rows.append(cache[key])
+        cr = crystal if nodes is None else str(nodes[i])
+        if (cr,) + key not in cache:
+            cache[(cr,) + key] = node_params(cr, key[0], key[1], key[2], T, key[3], key[4])
+        rows.append(cache[(cr,) + key])
     if not rows:
         return None
 

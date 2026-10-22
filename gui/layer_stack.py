@@ -35,6 +35,9 @@ def layer_composition(layer, end: str = "") -> tuple:
             getattr(layer, "x_P" + end, 0.0))
 
 
+_NEW_LAYER_MATERIAL = {"zincblende": "AlGaAs", "monoclinic": "Ga2O3"}
+
+
 def stack_crystal(layers) -> str:
     """Crystal system of the stack: that of its first physical layer."""
     for layer in layers or []:
@@ -192,13 +195,13 @@ class LayerStackPanel(QtWidgets.QWidget):
 
     def _add_abrupt(self):
         # a new layer joins the stack's crystal system: GaAs in an
-        # arsenide/phosphide stack, GaN otherwise
-        material = "AlGaAs" if stack_crystal(self.model.layers) == "zincblende" else None
+        # arsenide/phosphide stack, Ga2O3 in an oxide stack, GaN otherwise
+        material = _NEW_LAYER_MATERIAL.get(stack_crystal(self.model.layers))
         self.model.add_layer(AbruptLayer(x_Al=0.0, thickness_nm=10.0, material=material))
         self.select(len(self.model.layers) - 1)
 
     def _add_graded(self):
-        material = "AlGaAs" if stack_crystal(self.model.layers) == "zincblende" else None
+        material = _NEW_LAYER_MATERIAL.get(stack_crystal(self.model.layers))
         self.model.add_layer(GradedLayer(x_Al_start=0.0, x_Al_end=0.2, thickness_nm=10.0, material=material))
         self.select(len(self.model.layers) - 1)
 

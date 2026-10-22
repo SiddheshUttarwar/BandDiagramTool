@@ -161,7 +161,9 @@ def _mott_background(ax, r: SolverResult) -> None:
     what it does and doesn't model, and physics.self_consistent's docstring
     for what the solver's actual carrier-density physics uses.
     """
-    comp = (r.x_Al, getattr(r, 'x_In', None), getattr(r, 'x_P', None), getattr(r, 'crystal', 'wurtzite'))
+    nodes = getattr(r, 'crystal_nodes', None)
+    comp = (r.x_Al, getattr(r, 'x_In', None), getattr(r, 'x_P', None),
+            getattr(r, 'crystal', 'wurtzite') if nodes is None else nodes)
     N_mott_donor = donor_mott_density_cm3(*comp)
     N_mott_acceptor = acceptor_mott_density_cm3(*comp)
     mott_mask = (r.ND > N_mott_donor) | (r.NA > N_mott_acceptor)

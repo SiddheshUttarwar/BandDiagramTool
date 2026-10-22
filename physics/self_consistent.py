@@ -373,6 +373,41 @@ def _nonlinear_poisson_residual_norm(
 # Result dataclass
 # ---------------------------------------------------------------------------
 
+def _cutoff_qfl(Ef: np.ndarray, dens: np.ndarray, floor: float) -> np.ndarray:
+    """The quasi-Fermi level of a carrier, with the zero-current limit where
+    its density is below the transport floor and the stretch reaches a contact.
+
+    With a minimum density in the flux (dd_newton.DDProblem.transport_floor)
+    a stretch where the true density is below it conducts like a uniform
+    resistor, and its level is a straight line between its ends: across the
+    whole n-region for holes under reverse bias, through the depleted MQW
+    for electrons. The density there is below the floor, so the level is
+    not a result -- carrying no current (n_i is ~1e-50 cm^-3 in AlGaN), it
+    is that of the conducting region it adjoins, up to the contact, which
+    keeps its own value. A stretch between two conducting regions (a 2D gas
+    held through the floor) is left as solved.
+    """
+    out = np.array(Ef, dtype=float, copy=True)
+    low = np.asarray(dens, dtype=float) < floor
+    N = len(out)
+    i = 0
+    while i < N:
+        if not low[i]:
+            i += 1
+            continue
+        a = i
+        while i < N and low[i]:
+            i += 1
+        b = i - 1                       # low stretch [a, b]
+        if a == 0 and b == N - 1:
+            break                       # nothing conducts: leave it
+        if b == N - 1:
+            out[a:b] = out[a - 1]
+        elif a == 0:
+            out[1:b + 1] = out[b + 1]
+    return out
+
+
 @dataclass
 class SolverResult:
     """All outputs from one solve() call."""
@@ -463,6 +498,9 @@ class SolverResult:
     # fraction of the group-V sublattice.
     crystal: str = 'wurtzite'
     x_P: Optional[np.ndarray] = None
+    # per-node crystal system of a nitride stack containing Ga2O3 layers
+    # (GridData.crystal_nodes); None when every node is `crystal`
+    crystal_nodes: Optional[np.ndarray] = None
     E_h_lh: Optional[np.ndarray] = None
     psi_h_lh: Optional[np.ndarray] = None
     # 8-band k.p: valence character of each hole level in E_h, as weights
@@ -1820,7 +1858,13 @@ def solve_self_consistent(
                          f"reporting converged=False; state shown is at "
                          f"V = {V_internal:.4f} V.")
                 break
-            if residual < tol and (not quantum or gamma_mismatch < _GAMMA_MISMATCH_TOL):
+            # A converged inner solve that took at most one Newton step is a
+            # fixed point even when |dphi| is above tol: tens of volts over
+            # thousands of nodes re-solve with ~1e-5 V of round-off (seen:
+            # a -20 V UV-LED ran to max_iter=5000 at |dphi| ~ 3e-6 V and was
+            # reported not converged). dd_newton accepts the same noise.
+            at_noise = (cd_result.n_iter <= 1 and residual < dd_newton._NOISE_UPDATE_MAX)
+            if (residual < tol or at_noise) and (not quantum or gamma_mismatch < _GAMMA_MISMATCH_TOL):
                 converged = True
                 break
 
@@ -1981,7 +2025,7 @@ def solve_self_consistent(
         Lz_nm = max(float(g.x_nm[qw_i1 - 1] - g.x_nm[qw_i0]), 0.1)
         Efn_well = float(np.mean(Efn[qw_i0:qw_i1]))
         Efp_well = float(np.mean(Efp[qw_i0:qw_i1]))
-        n_r = 3.5 if getattr(g, 'crystal', 'wurtzite') == 'zincblende' else 2.5
+        n_r = {'zincblende': 3.5, 'monoclinic': 1.95}.get(getattr(g, 'crystal', 'wurtzite'), 2.5)
         try:
             spec = kp_model.solver.gain(Ec_final[q_i0:q_i1], Ev_final[q_i0:q_i1], Efn_well, Efp_well,
                                         T, Lz_nm, n_r)
@@ -2012,6 +2056,10 @@ def solve_self_consistent(
         if verbose:
             _log(f"  Current density J = {J_total:.4e} A/cm^2, conservation error "
                  f"(max-min)/max|J| = {current_err:.2e}")
+        if dd_floor > 0.0:
+            # after the current (it needs the solved levels): only the levels reported change
+            Efn = _cutoff_qfl(Efn, n_final, dd_floor)
+            Efp = _cutoff_qfl(Efp, p_final, dd_floor)
 
     return SolverResult(
         x_nm=g.x_nm, x_Al=g.x_Al,
@@ -2029,6 +2077,7 @@ def solve_self_consistent(
         x_In=(np.asarray(g.x_In).copy() if getattr(g, 'x_In', None) is not None
               else np.zeros_like(np.asarray(g.x_Al))),
         crystal=getattr(g, 'crystal', 'wurtzite'),
+        crystal_nodes=getattr(g, 'crystal_nodes', None),
         transport_floor_cm3=float(dd_floor),
         bias_mode=('equilibrium' if V_applied == 0.0 else 'gate' if gate_bias
                    else 'interpolated' if interpolate else 'flat' if flat_qfl else 'current'),

@@ -184,6 +184,7 @@ class PlotPanel(QtWidgets.QWidget):
         self._crystal = "wurtzite"   # of the stack on screen; selects the RSM reflections offered
         self._light_bands = None    # physics.illumination.IlluminatedBands, once solved
         self._rsm = None            # physics.rsm.RSMResult of the result on screen, once calculated
+        self._quantum_region = None  # (start, end) [nm] of the Quantum Region Markers, for the well fields
         self._status_callback = None
         self._status_text = "Ready."
         self._opts = {key: on for key, _text, _labels, on in _CURVES}
@@ -532,6 +533,8 @@ class PlotPanel(QtWidgets.QWidget):
             k = int(np.argmax(f))
             put("Peak field", f"{f[k]:.3f} MV/cm at z = {float(r.x_nm[k]):.2f} nm")
         lines += self._built_in_lines(r)
+        lines += self._well_field_lines(r)
+        lines += self._breakdown_lines(r)
 
         rec = recombination_currents(r)
         # a unipolar device has rates of order 1e-30: numerical zeros, not worth a block
@@ -657,6 +660,82 @@ class PlotPanel(QtWidgets.QWidget):
             out.append("      Polarization charge still bends the bands inside, so they are not flat at V = V_bi.")
         return out
 
+    def _breakdown_lines(self, r) -> list:
+        """Avalanche and tunnelling leakage at this bias (physics.breakdown),
+        and the result of a breakdown-voltage search."""
+        a = getattr(r, "breakdown", None)
+        if a is None:
+            return []
+        out = ["", "BREAKDOWN AND LEAKAGE   post-processed on these bands (physics.breakdown)"]
+        put = lambda k, v: out.append(f"  {k:<26}{v}")
+        M = max(a.M_n, a.M_p)
+        put("Ionization integral", f"{a.ion_integral:.4g}   (1 = avalanche breakdown;  electrons {a.ion_integral_n:.3g}, "
+                                   f"holes {a.ion_integral_p:.3g})")
+        put("Multiplication M", "infinite (past breakdown)" if not np.isfinite(M) else f"{M:.4g}")
+        put("Band-to-band tunnelling", f"{a.J_btbt:.3e} A/cm^2"
+            + (f"   strongest path {a.btbt_path[0]:.1f} nm (valence) -> {a.btbt_path[1]:.1f} nm (conduction)"
+               if a.btbt_path else "   (no energy has a valence band facing a conduction band)"))
+        put("Trap-assisted tunnelling", f"{a.J_tat:.3e} A/cm^2   (Hurkx SRH, midgap traps, the layer lifetimes)")
+        put("Leakage x M", f"{a.J_leak:.3e} A/cm^2" if np.isfinite(a.J_leak) else "infinite")
+        put("Peak field", f"{a.peak_field_MV_cm:.3f} MV/cm at z = {a.peak_field_nm:.2f} nm")
+        br = getattr(r, "breakdown_search", None)
+        if br is not None:
+            out += ["", "BREAKDOWN VOLTAGE   reverse bias at which the ionization integral reaches 1",
+                    f"  {'V_breakdown':<26}" + (f"{br.V_br:+.3f} V" if br.converged
+                                                 else f"not found ({br.message}); last {br.V_br:+.3f} V"),
+                    f"  {'Leakage > ' + format(br.J_leak_limit, 'g') + ' A/cm^2':<26}"
+                    + (f"from {br.V_leak:+.3f} V" if br.V_leak is not None else "not reached in the search"),
+                    "      search:  V [V]     ion. integral   J_BTBT [A/cm^2]  J_TAT [A/cm^2]  peak F [MV/cm]"]
+            for h in sorted(br.history, key=lambda h: -h.V):
+                out.append(f"           {h.V:+10.3f}   {h.ion_integral:11.4g}   {h.J_btbt:12.3e}   {h.J_tat:12.3e}   "
+                           f"{h.peak_field_MV_cm:8.3f}")
+        out.append("      Impact ionization: GaN coefficients (Cao 2018) scaled by (Eg/3.39)^2 for AlGaN -- uncertain at high Al.")
+        out.append("      Leakage along dislocations (the usual reverse leakage of UV LEDs) is not in this 1D model.")
+        return out
+
+    def _well_field_lines(self, r) -> list:
+        """Field in each quantum well and, after a flat-band search, its result."""
+        from physics.flat_band import find_wells, well_fields
+        try:
+            wells = find_wells(r, self._quantum_region)
+        except Exception:  # noqa: BLE001 - a summary line is never worth failing the display
+            return []
+        if not wells:
+            return []
+        x = np.asarray(r.x_nm, dtype=float)
+        fw = well_fields(r, wells)
+        out = ["", "QUANTUM WELL FIELD   mean over the core of each well; 0 = flat band",
+               "      well    z [nm]              F [MV/cm]   drop across well [eV]"]
+        for k, ((i0, i1), f) in enumerate(zip(wells, fw)):
+            w_nm = float(x[i1 - 1] - x[i0])
+            out.append(f"  {k + 1:6d}    {x[i0]:7.2f} - {x[i1 - 1]:7.2f}   {f:+9.4f}   {abs(f) * w_nm * 0.1:9.4f}")
+        fb = getattr(r, "flat_band", None)
+        if fb is not None:
+            out += ["", f"FLAT-BAND VOLTAGE   bias at which the field in the wells ({fb.target}) is zero",
+                    f"  {'V_flat-band':<26}" + (f"{fb.V_fb:+.4f} V" if fb.converged
+                                                 else f"not found ({fb.message}); last {fb.V_fb:+.4f} V"),
+                    "      search:  V [V]        F [MV/cm]"]
+            for V, f_list in fb.history:
+                f = float(np.mean(f_list)) if fb.target.startswith("mean") else f_list[int(fb.target.split()[-1]) - 1]
+                out.append(f"           {V:+10.4f}   {f:+10.4f}")
+            if len(fb.history) >= 2:
+                (V0, f0), (V1, f1) = [(v, float(np.mean(fl))) for v, fl in fb.history[-2:]]
+                if V1 != V0 and f1 != f0:
+                    slope = (f1 - f0) / (V1 - V0)
+                    out.append(f"  {'dF/dV near flat band':<26}{slope:+.4f} MV/cm per V   "
+                               f"(bias spread over ~{abs(1e-6 / slope) * 1e7 if slope else 0:.0f} nm)")
+            if fb.per_well:
+                out += ["", "FLAT-BAND VOLTAGE OF EACH WELL   bias at which that well alone is flat",
+                        "      well    z [nm]              F at 0 V [MV/cm]   V_flat-band [V]"]
+                f0 = next((fl for V, fl in fb.history if V == 0.0), None)
+                for k, ((z0, z1), (V, ok)) in enumerate(zip(fb.wells_nm, fb.per_well)):
+                    f_txt = f"{f0[k]:+9.4f}" if f0 is not None else "        -"
+                    out.append(f"  {k + 1:6d}    {z0:7.2f} - {z1:7.2f}   {f_txt}          "
+                               + (f"{V:+10.4f}" if ok else f"{V:+10.4f}  (not converged)"))
+                Vs = [V for V, _ in fb.per_well]
+                out.append(f"      spread between wells: {max(Vs) - min(Vs):.2f} V")
+        return out
+
     def _update_zoom_choices(self, layers: Optional[list],
                               qw_range_nm: Optional[Tuple[float, float]] = None):
         """Rebuild the Region dropdown from the current device's layers (in
@@ -669,6 +748,9 @@ class PlotPanel(QtWidgets.QWidget):
         invisible sliver against the full x-axis and easy to miss entirely.
         Never overrides a zoom choice the user has already made.
         """
+        if layers is not None:
+            from physics.flat_band import quantum_region_nm
+            self._quantum_region = quantum_region_nm(layers)
         previous = self._zoom_combo.currentText()
         self._layer_ranges = []
         self._layer_spans = []
@@ -782,7 +864,9 @@ class PlotPanel(QtWidgets.QWidget):
         result = self.results[self.current_index]
         hkl = reflections_for(getattr(result, "crystal", "wurtzite")).get(self._rsm_combo.currentText())
         if hkl is None:
-            self.set_status("Choose a reflection for this crystal structure.")
+            self.set_status("Reciprocal space maps are not modelled for β-Ga₂O₃."
+                            if getattr(result, "crystal", "") == "monoclinic"
+                            else "Choose a reflection for this crystal structure.")
             return
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:

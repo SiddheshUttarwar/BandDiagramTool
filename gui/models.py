@@ -45,6 +45,7 @@ class SolveSettings:
     include_spontaneous_polarization: bool = True
     polarity: str = 'metal'                       # 'metal' | 'N' (growth along [000-1])
     polarization_model: str = 'ambacher2002'      # 'ambacher2002' | 'dreyer2016'
+    polarization_scale: float = 1.0               # fraction of the theoretical polarization (InGaN fits often use ~0.5)
     n_states_e: int = 16
     n_states_h: int = 16
     max_iter: int = 5000

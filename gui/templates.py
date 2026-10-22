@@ -166,6 +166,44 @@ def _gaas_led() -> DeviceModel:
     return m
 
 
+def _ga2o3_modfet() -> DeviceModel:
+    """beta-(Al0.2Ga0.8)2O3 / Ga2O3 modulation-doped FET on (010): Si
+    delta-doping behind a 4 nm spacer, Ni gate. Ga2O3 has no polarization,
+    so the channel electrons all come from the donors."""
+    m = DeviceModel()
+    m.layers = [AbruptLayer(x_Al=0.0, thickness_nm=200, material='Ga2O3', n_doping=1e15),
+                QuantumRegionMarker(boundary='start'),
+                AbruptLayer(x_Al=0.0, thickness_nm=30, material='Ga2O3', dx_nm=0.2),
+                AbruptLayer(x_Al=0.2, thickness_nm=4, material='Ga2O3', dx_nm=0.2),       # spacer
+                QuantumRegionMarker(boundary='end'),
+                AbruptLayer(x_Al=0.2, thickness_nm=2, material='Ga2O3', n_doping=3e19, dx_nm=0.2),   # Si delta, 6e12 cm^-2
+                AbruptLayer(x_Al=0.2, thickness_nm=24, material='Ga2O3', dx_nm=0.5)]
+    m.bottom_contact = Contact('bottom', 'ohmic', 'Ti')
+    m.top_contact = Contact('top', 'schottky', 'Ni', barrier_eV=1.4)
+    m.settings.dx_nm = 1.0
+    m.settings.quantum = True
+    m.settings.max_iter = 500
+    return m
+
+
+def _ga2o3_sbd() -> DeviceModel:
+    """Ni / beta-Ga2O3 Schottky barrier diode: lightly doped drift layer on
+    an n+ substrate, 1.1 eV barrier, under 50 V reverse bias."""
+    m = DeviceModel()
+    m.layers = [AbruptLayer(x_Al=0.0, thickness_nm=300, material='Ga2O3', n_doping=5e18),
+                AbruptLayer(x_Al=0.0, thickness_nm=1500, material='Ga2O3', n_doping=2e16)]
+    m.bottom_contact = Contact('bottom', 'ohmic', 'Ti')
+    m.top_contact = Contact('top', 'schottky', 'Ni', barrier_eV=1.1)
+    m.settings.dx_nm = 5.0
+    m.settings.quantum = False
+    m.settings.V_applied = -50.0
+    # a diode, not a gate: the metal collects the holes, so the drift layer
+    # stays in deep depletion instead of inverting under the contact
+    m.settings.bias_model = 'current'
+    m.settings.max_iter = 500
+    return m
+
+
 TEMPLATES: List[Template] = [
     Template("hemt", "AlGaN/GaN HEMT",
              "25 nm Al₀.₃Ga₀.₇N barrier on GaN. Polarization-induced "
@@ -199,6 +237,14 @@ TEMPLATES: List[Template] = [
              "GaAs active layer between doped Al₀.₃Ga₀.₇As at 1.3 V forward bias. "
              "SRH, radiative and Auger recombination and the radiative efficiency.",
              ("Recombination", "Bias"), _gaas_led),
+    Template("ga2o3_modfet", "β-(AlGa)₂O₃/Ga₂O₃ MODFET",
+             "Modulation-doped β-(Al₀.₂Ga₀.₈)₂O₃/Ga₂O₃ on (010) with Si δ-doping "
+             "behind a 4 nm spacer. Two-dimensional electron gas without polarization.",
+             ("2DEG", "Oxides"), _ga2o3_modfet),
+    Template("ga2o3_sbd", "β-Ga₂O₃ Schottky diode",
+             "Ni Schottky contact on a 2×10¹⁶ cm⁻³ β-Ga₂O₃ drift layer at 50 V "
+             "reverse bias: depletion width and peak field.",
+             ("Power", "Oxides"), _ga2o3_sbd),
 ]
 
 

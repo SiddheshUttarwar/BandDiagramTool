@@ -119,6 +119,10 @@ _ZB = {
 }
 
 
+_GA2O3 = (0x6B, 0x7F, 0x99)   # slate
+_AL2O3 = (0xC9, 0xD3, 0xE0)   # pale slate
+
+
 def material_color(x_al: float, x_in: float = 0.0, x_p: float = 0.0, crystal: str = "wurtzite") -> str:
     """Colour of a composition. Nitrides, Al(x)In(y)Ga(1-x-y)N: GaN blue,
     toward violet with Al and toward green with In. Zincblende,
@@ -128,6 +132,9 @@ def material_color(x_al: float, x_in: float = 0.0, x_p: float = 0.0, crystal: st
     x_al = max(0.0, min(1.0, float(x_al)))
     x_in = max(0.0, min(1.0, float(x_in)))
     z = max(0.0, 1.0 - x_al - x_in)
+    if crystal == "monoclinic":
+        # beta-(AlGa)2O3: slate, paler with Al
+        return _hex(tuple(int(round((1 - x_al) * g + x_al * a)) for g, a in zip(_GA2O3, _AL2O3)))
     if crystal == "zincblende":
         x_p = max(0.0, min(1.0, float(x_p)))
         w = {("Ga", "As"): z * (1 - x_p), ("Al", "As"): x_al * (1 - x_p), ("In", "As"): x_in * (1 - x_p),
@@ -143,7 +150,7 @@ _SUP = str.maketrans("0123456789-+", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺")
 
 def formula_html(name: str) -> str:
     """'Al0.30Ga0.70N' -> 'Al<sub>0.30</sub>Ga<sub>0.70</sub>N' (Qt rich text)."""
-    return re.sub(r"(?<=[A-Za-z])(\d+(?:\.\d+)?)", r"<sub>\1</sub>", name)
+    return re.sub(r"(?<=[A-Za-z)])(\d+(?:\.\d+)?)", r"<sub>\1</sub>", name)
 
 
 def sci(value: float, digits: int = 2) -> str:

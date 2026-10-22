@@ -64,6 +64,10 @@ _Z = {"Al": 13.0, "Ga": 31.0, "In": 49.0, "N": 7.0, "As": 33.0, "P": 15.0}
 
 
 def reflections_for(crystal: str) -> dict:
+    """Reflections offered for a crystal system; none for monoclinic
+    beta-Ga2O3, whose map is not modelled."""
+    if crystal == "monoclinic":
+        return {}
     return CUBIC_REFLECTIONS if crystal == "zincblende" else REFLECTIONS
 
 
@@ -96,6 +100,8 @@ def simulate_rsm(result, hkl=(1, 0, 5), n_qx: int = 241, n_qz: int = 801,
     default they are read off the grid. The crystal system is the result's:
     wurtzite along [0001] or zincblende along [001]."""
     crystal = getattr(result, "crystal", "wurtzite")
+    if crystal == "monoclinic":
+        raise ValueError("Reciprocal space maps are not modelled for monoclinic beta-Ga2O3.")
     cubic = crystal == "zincblende"
     h, k, l = (int(v) for v in hkl)
     if l == 0:
@@ -111,6 +117,15 @@ def simulate_rsm(result, hkl=(1, 0, 5), n_qx: int = 241, n_qz: int = 801,
     x_p = np.zeros_like(x_al) if x_p is None or not cubic else np.asarray(x_p, dtype=float)
     exx = np.asarray(result.eps_xx, dtype=float)
     ezz = np.asarray(result.eps_zz, dtype=float)
+    nodes = getattr(result, "crystal_nodes", None)
+    # beta-Ga2O3 layers in a nitride stack do not scatter into the nitride
+    # reflections; they are left out (their own map is not modelled)
+    keep = (np.ones(len(z), dtype=bool) if nodes is None
+            else np.asarray(nodes, dtype=object) != "monoclinic")
+    if not np.all(keep):
+        x_al = np.where(keep, x_al, 0.0)
+        exx = np.where(keep, exx, 0.0)
+        ezz = np.where(keep, ezz, 0.0)
 
     # relaxed lattice constants per distinct composition
     comps = np.round(np.stack([x_al, x_in, x_p], axis=1), 6)
@@ -125,6 +140,7 @@ def simulate_rsm(result, hkl=(1, 0, 5), n_qx: int = 241, n_qz: int = 801,
     c = c0_u[inverse] * (1.0 + ezz)
     f = x_al * _Z["Al"] + x_in * _Z["In"] + (1.0 - x_al - x_in) * _Z["Ga"]
     f = f + (x_p * _Z["P"] + (1.0 - x_p) * _Z["As"] if cubic else _Z["N"])
+    f = np.where(keep, f, 0.0)
     dz = np.gradient(z)
 
     qx_cell = _q_inplane(h, k, a, crystal)

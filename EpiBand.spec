@@ -82,5 +82,5 @@ if MACOS:
         name='EpiBand.app',
         icon=ICON,
         bundle_identifier='io.github.siddheshuttarwar.epiband',
-        info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.2.0'},
+        info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.3.0'},
     )

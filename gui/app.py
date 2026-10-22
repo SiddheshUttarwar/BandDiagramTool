@@ -115,6 +115,11 @@ class App(QtWidgets.QMainWindow):
                             "trash", "Delete the selected layer")
         self.act_run = a("&Run", self._request_solve_now, "F5", "play",
                          "Solve the device with the current settings", icon_color="#1E8E3E")
+        self.act_flat_band = a("Find &Flat-Band Voltage", lambda: self._request_solve_now(flat_band=True), "",
+                               "", "Search the bias at which the field in the quantum wells is zero")
+        self.act_breakdown = a("Find &Breakdown Voltage", lambda: self._request_solve_now(breakdown=True), "",
+                               "", "Search the reverse bias at which impact ionization runs away (avalanche), "
+                                   "with the tunnelling leakage on the way")
         self.act_stop = a("&Stop", self._stop_solve, "Esc", "stop",
                           "Stop the running simulation", icon_color="#C4372E")
         self.act_docs = a("&Manual", self._open_docs, "F1", "book", "Model reference and validation")
@@ -182,6 +187,8 @@ class App(QtWidgets.QMainWindow):
 
         m = bar.addMenu("&Simulation")
         m.addAction(self.act_run)
+        m.addAction(self.act_flat_band)
+        m.addAction(self.act_breakdown)
         m.addAction(self.act_stop)
 
         m = bar.addMenu("&Help")
@@ -361,6 +368,7 @@ class App(QtWidgets.QMainWindow):
                                  T=f["T_growth_C"] + 273.15, dx_nm=s.dx_nm,
                                  include_spontaneous_polarization=s.include_spontaneous_polarization,
                                  polarity=s.polarity, polarization_model=s.polarization_model,
+                                 polarization_scale=s.polarization_scale,
                                  recombination=s.recombination())
             S = f["surface_S"]
             result = solve_illuminated(device, wavelength_nm=f["wavelength_nm"], power_W_cm2=f["power_W_cm2"],
@@ -398,6 +406,8 @@ class App(QtWidgets.QMainWindow):
         self._progress.setVisible(busy)
         self._state_label.setText("Solving" if busy else "Ready")
         self.act_run.setEnabled(not busy)
+        self.act_flat_band.setEnabled(not busy)
+        self.act_breakdown.setEnabled(not busy)
         self.act_stop.setEnabled(busy)
         if hasattr(self, "_side_run"):
             self._side_run.setEnabled(not busy)
@@ -425,7 +435,7 @@ class App(QtWidgets.QMainWindow):
         if self.model.is_solvable() and not self._busy:
             self.plot_panel.set_status("Device changed. Press Run (F5) to update the results.")
 
-    def _request_solve_now(self):
+    def _request_solve_now(self, flat_band: bool = False, breakdown: bool = False):
         if self._busy:
             return
         if not self.model.is_solvable():
@@ -445,6 +455,7 @@ class App(QtWidgets.QMainWindow):
             T=s.T, dx_nm=s.dx_nm,
             include_spontaneous_polarization=s.include_spontaneous_polarization,
             polarity=s.polarity, polarization_model=s.polarization_model,
+            polarization_scale=s.polarization_scale,
             recombination=s.recombination(),
             bias_model=s.resolved_bias_model(self.model.top_contact.contact_type),
             insulator_bandgap=s.insulator_bandgap,
@@ -455,12 +466,15 @@ class App(QtWidgets.QMainWindow):
             sweep=False, V_applied=s.V_applied,      # single bias point only
 
             V_start=s.V_start, V_stop=s.V_stop, n_steps=s.n_steps,
+            flat_band=flat_band,
+            breakdown=breakdown,
         )
         self.plot_panel.clear_log()
         self.plot_panel.output_tabs.setCurrentWidget(self.plot_panel.log_widget)
         self._active_request_id = self.worker.submit(req)
         self._set_busy(True)
-        self.plot_panel.set_status("Solving…")
+        self.plot_panel.set_status("Searching for the flat-band voltage…" if flat_band
+                                   else "Searching for the breakdown voltage…" if breakdown else "Solving…")
 
     def _stop_solve(self):
         if not self._busy:
@@ -512,7 +526,21 @@ class App(QtWidgets.QMainWindow):
                 reason = "series-resistance drop" if r.converged else "the bias ramp stopped here"
                 v_note = (f"applied {r.V_applied:.3f} V, "
                           f"internal {r.V_internal:.3f} V ({reason})")
-            self.plot_panel.set_status(f"{status} in {r.n_iterations} iterations.  {v_note}")
+            fb = getattr(r, "flat_band", None)
+            br = getattr(r, "breakdown_search", None)
+            if br is not None:
+                self.plot_panel.set_status(
+                    (f"Avalanche breakdown at V = {br.V_br:+.2f} V" if br.converged
+                     else f"Breakdown not found: {br.message}")
+                    + (f";  leakage reaches {br.J_leak_limit:g} A/cm² at {br.V_leak:+.2f} V"
+                       if br.V_leak is not None else "")
+                    + f"  ({len(br.history)} solves)")
+            elif fb is not None:
+                self.plot_panel.set_status(
+                    (f"Flat band at V = {fb.V_fb:+.3f} V" if fb.converged else f"Flat band not found: {fb.message}")
+                    + f"  ({fb.target}, {len(fb.history)} solves)")
+            else:
+                self.plot_panel.set_status(f"{status} in {r.n_iterations} iterations.  {v_note}")
         self.plot_panel.output_tabs.setCurrentWidget(self.plot_panel.summary_widget)
 
     # ------------------------------------------------------------------
@@ -535,8 +563,8 @@ class App(QtWidgets.QMainWindow):
         box.setText(
             f"<b>{_APP_NAME}</b><br><br>"
             "One-dimensional Schrödinger–Poisson and drift-diffusion solver<br>"
-            "for III-V heterostructures: wurtzite nitrides and<br>"
-            "zincblende arsenides and phosphides.<br><br>"
+            "for semiconductor heterostructures: wurtzite nitrides,<br>"
+            "zincblende arsenides and phosphides, and β-(AlGa)₂O₃.<br><br>"
             f"Model reference and validation:<br><a href='{_DOCS_URL}'>{_DOCS_URL}</a>")
         box.exec()
 

@@ -48,6 +48,9 @@ class SolveRequest:
     recombination: Optional[dict] = None   # coefficient overrides, see AlGaNDevice
     bias_model: str = 'auto'               # 'auto' | 'current' | 'nextnano' | 'gate'
     insulator_bandgap: float = 1.0
+    flat_band: bool = False                # search the bias that flattens the wells (physics.flat_band)
+    breakdown: bool = False                # search the avalanche breakdown voltage (physics.breakdown)
+    polarization_scale: float = 1.0        # fraction of the theoretical polarization
 
 
 @dataclass
@@ -138,8 +141,35 @@ class SolveWorker:
                               include_spontaneous_polarization=req.include_spontaneous_polarization,
                               polarity=req.polarity,
                               polarization_model=req.polarization_model,
+                              polarization_scale=req.polarization_scale,
                               recombination=req.recombination)
-        if req.sweep:
+        if req.breakdown:
+            from physics.breakdown import find_breakdown_voltage
+            br = find_breakdown_voltage(
+                device, log_fn=log_fn,
+                solve_kwargs=dict(quantum=False, max_iter=req.max_iter, tol=req.tol, alpha=req.alpha,
+                                  verbose=False, cancel_check=self._cancel_event.is_set))
+            br.result.breakdown_search = br      # read by the summary (gui.plot_panel)
+            br.result.breakdown = br.analysis
+            self._out.put(SolveDone(request_id=req.request_id, result=br.result))
+        elif req.flat_band:
+            from physics.flat_band import find_flat_band
+            fb = find_flat_band(
+                device, log_fn=log_fn,
+                solve_kwargs=dict(quantum=req.quantum, n_states_e=req.n_states_e, n_states_h=req.n_states_h,
+                                  max_iter=req.max_iter, tol=req.tol, alpha=req.alpha, verbose=False,
+                                  cancel_check=self._cancel_event.is_set))
+            if len(fb.history[0][1]) > 1 and not self._cancel_event.is_set():
+                # each well of a multi-well stack flattens at its own bias
+                from physics.flat_band import flat_band_each_well
+                fb.per_well = flat_band_each_well(
+                    device, fb, log_fn=log_fn,
+                    solve_kwargs=dict(quantum=req.quantum, n_states_e=req.n_states_e, n_states_h=req.n_states_h,
+                                      max_iter=req.max_iter, tol=req.tol, alpha=req.alpha, verbose=False,
+                                      cancel_check=self._cancel_event.is_set))
+            fb.result.flat_band = fb             # read by the summary (gui.plot_panel)
+            self._out.put(SolveDone(request_id=req.request_id, result=fb.result))
+        elif req.sweep:
             results = device.sweep_voltage(
                 req.V_start, req.V_stop, n_steps=req.n_steps,
                 quantum=req.quantum, flat_qfl=req.flat_qfl,
@@ -164,6 +194,13 @@ class SolveWorker:
                 gate_bias=(None if req.bias_model == 'auto' else req.bias_model == 'gate'),
                 interpolated_qfl=(req.insulator_bandgap if req.bias_model == 'nextnano' else None),
             )
+            if result.V_applied < 0:
+                # avalanche and tunnelling leakage at this reverse bias (Summary)
+                try:
+                    from physics.breakdown import analyze
+                    result.breakdown = analyze(result, device.grid)
+                except Exception as exc:  # noqa: BLE001 - a summary block is never worth failing the solve
+                    log_fn(f"Breakdown analysis skipped: {exc}")
             self._out.put(SolveDone(request_id=req.request_id, result=result))
 
     def _start_next(self) -> None:

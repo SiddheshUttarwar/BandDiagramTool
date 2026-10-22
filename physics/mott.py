@@ -50,14 +50,19 @@ def _params_along(x_Al, x_In, x_P, crystal):
     x_arr = np.atleast_1d(np.asarray(x_Al, dtype=float))
     y_arr = np.zeros_like(x_arr) if x_In is None else np.atleast_1d(np.asarray(x_In, dtype=float))
     v_arr = np.zeros_like(x_arr) if x_P is None else np.atleast_1d(np.asarray(x_P, dtype=float))
+    cr_arr = (np.full(len(x_arr), crystal, dtype=object) if isinstance(crystal, str)
+              else np.asarray(crystal, dtype=object))
     cache = {}
     out = []
-    for xa, xi, xp in zip(x_arr, y_arr, v_arr):
-        key = (round(float(xa), 6), round(float(xi), 6), round(float(xp), 6))
+    for xa, xi, xp, cr in zip(x_arr, y_arr, v_arr, cr_arr):
+        key = (round(float(xa), 6), round(float(xi), 6), round(float(xp), 6), cr)
         if key not in cache:
-            if crystal == 'zincblende':
+            if cr == 'zincblende':
                 from physics.materials.zincblende import get_zincblende_params
-                cache[key] = get_zincblende_params(*key)
+                cache[key] = get_zincblende_params(*key[:3])
+            elif cr == 'monoclinic':
+                from physics.materials.gallium_oxide import get_gallium_oxide_params
+                cache[key] = get_gallium_oxide_params(key[0])
             else:
                 cache[key] = get_AlGaN_params(xa) if xi == 0 else get_nitride_params(xa, xi)
         out.append(cache[key])

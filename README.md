@@ -573,7 +573,7 @@ reference names its sources. The main ones:
 If EpiBand contributes to a paper, thesis or presentation, please cite it:
 
 > S. Uttarwar, *EpiBand: a one-dimensional 8-band k·p Schrödinger–Poisson–drift-diffusion solver
-> for III-V heterostructures*, version 1.2.0 (2026).
+> for III-V heterostructures*, version 1.3.0 (2026).
 > https://github.com/SiddheshUttarwar/BandDiagramTool
 
 ```bibtex
@@ -581,7 +581,7 @@ If EpiBand contributes to a paper, thesis or presentation, please cite it:
   author  = {Uttarwar, Siddhesh},
   title   = {{EpiBand}: a one-dimensional 8-band k.p
              {Schr\"odinger}--{Poisson}--drift-diffusion solver for {III-V} heterostructures},
-  version = {1.2.0},
+  version = {1.3.0},
   year    = {2026},
   url     = {https://github.com/SiddheshUttarwar/BandDiagramTool},
   note    = {Model reference: https://siddheshuttarwar.github.io/BandDiagramTool/}

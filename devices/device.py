@@ -1,7 +1,7 @@
 """
 AlGaNDevice: user-facing class for heterostructure simulation -- wurtzite
-nitrides (the original scope, hence the name) and zincblende arsenides /
-phosphides. `Device` is the same class under a material-neutral name.
+nitrides (the original scope, hence the name), zincblende arsenides /
+phosphides and monoclinic beta-(AlGa)2O3. `Device` is the same class under a material-neutral name.
 
 Usage example:
     from devices.layer import AbruptLayer, GradedLayer, Contact
@@ -40,7 +40,8 @@ class AlGaNDevice:
     The device is defined entirely by an ordered list of layers (bottom → top,
     i.e. substrate side first) and two metal contacts. The layers are all
     wurtzite nitrides (AlGaN, InGaN, InAlGaN) or all zincblende arsenides /
-    phosphides (AlGaAs, InGaAs, InGaP, InGaAsP, ...) -- see devices.layer.
+    phosphides (AlGaAs, InGaAs, InGaP, InGaAsP, ...) or all beta-(AlGa)2O3
+    (Ga2O3) -- see devices.layer.
 
     Parameters
     ----------
@@ -60,6 +61,7 @@ class AlGaNDevice:
         include_strain_band_shift: bool = True,
         polarity: str = 'metal',
         polarization_model: str = 'ambacher2002',
+        polarization_scale: float = 1.0,
         recombination: Optional[dict] = None,
     ) -> None:
         self.layers   = layers
@@ -70,6 +72,7 @@ class AlGaNDevice:
         self.include_strain_band_shift = include_strain_band_shift
         self.polarity = polarity                      # 'metal' | 'N'
         self.polarization_model = polarization_model  # 'ambacher2002' | 'dreyer2016'
+        self.polarization_scale = polarization_scale  # fraction of the theoretical polarization
         # Optional overrides of the material recombination coefficients:
         # {'tau_n', 'tau_p' [s], 'B_rad' [cm^3/s], 'C_n', 'C_p' [cm^6/s]}
         self.recombination = recombination
@@ -88,6 +91,7 @@ class AlGaNDevice:
             include_strain_band_shift=self.include_strain_band_shift,
             polarity=self.polarity,
             polarization_model=self.polarization_model,
+            polarization_scale=self.polarization_scale,
             recombination=self.recombination,
         )
         return self._grid

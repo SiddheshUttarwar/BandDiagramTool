@@ -183,6 +183,18 @@ class SettingsPanel(widgets.Section):
                 "constants. Dreyer 2016: hexagonal-referenced Psp with improper e31 "
                 "(Phys. Rev. X 6, 021038)."))
 
+        pol_scale = QtWidgets.QDoubleSpinBox()
+        pol_scale.setRange(0.0, 150.0)
+        pol_scale.setDecimals(0)
+        pol_scale.setSingleStep(5.0)
+        pol_scale.setValue(100.0 * s.polarization_scale)
+        pol_scale.valueChanged.connect(lambda v: self._set("polarization_scale", v / 100.0))
+        layout.addLayout(widgets.form_row(
+            "Polarization", pol_scale, unit="% of theory",
+            tip="Scales the spontaneous and piezoelectric polarization. Measured InGaN quantum-well "
+                "fields are often about half the theoretical value (Chow et al., APL 119, 221102 "
+                "(2021) simulate with 50 %)."))
+
         # --- Solver (collapsed by default) ---
         self._adv_cb = QtWidgets.QToolButton()
         self._adv_cb.setAutoRaise(True)

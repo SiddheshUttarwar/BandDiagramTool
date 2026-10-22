@@ -38,7 +38,7 @@ from devices.layer import (
     SurfaceState, InterfaceDipole,
 )
 from physics.materials.alloys import (
-    NITRIDE_KINDS, ZINCBLENDE_KINDS, free_fractions, normalize_composition,
+    NITRIDE_KINDS, OXIDE_KINDS, ZINCBLENDE_KINDS, free_fractions, normalize_composition,
 )
 from gui.models import DeviceModel
 from gui import widgets
@@ -279,12 +279,15 @@ class LayerEditorPanel(widgets.Section):
         """Material class dropdown; changing it rebuilds the form so only
         the fractions that material uses are shown."""
         combo = self._choice_field("Material", getattr(layer, "material", None) or "AlGaN",
-                                   list(NITRIDE_KINDS) + list(ZINCBLENDE_KINDS),
+                                   list(NITRIDE_KINDS) + list(ZINCBLENDE_KINDS) + list(OXIDE_KINDS),
                                    on_change=lambda: self.show(self.index))
-        combo.insertSeparator(len(NITRIDE_KINDS))      # wurtzite nitrides | zincblende arsenides, phosphides
-        combo.setToolTip("Nitrides (wurtzite) above the line, arsenides and phosphides (zincblende) "
-                         "below. A structure uses one family. GaAs is AlGaAs with no Al; "
-                         "InP is InGaP with In = 1.")
+        # wurtzite nitrides | zincblende arsenides, phosphides | monoclinic oxide
+        combo.insertSeparator(len(NITRIDE_KINDS) + len(ZINCBLENDE_KINDS))
+        combo.insertSeparator(len(NITRIDE_KINDS))
+        combo.setToolTip("Nitrides (wurtzite), then arsenides and phosphides (zincblende), then "
+                         "β-(AlGa)₂O₃ (monoclinic, on (010)). A structure uses one family. "
+                         "GaAs is AlGaAs with no Al; InP is InGaP with In = 1; "
+                         "Ga2O3 with an Al fraction is β-(AlₓGa₁₋ₓ)₂O₃.")
 
     def _build_abrupt_form(self, layer: AbruptLayer):
         mat = getattr(layer, "material", None) or "AlGaN"

@@ -13,11 +13,13 @@ v = x_P:
   'InGaP' (x_In)    'AlGaInP' (x_Al, x_In)   'InGaAsP' (x_In, x_P)
   'AlGaInAsP' (x_Al, x_In, x_P)
   e.g. GaAs = AlGaAs with x_Al = 0, InP = InGaP with x_In = 1.
+Monoclinic oxide on (010):
+  'Ga2O3'    beta-(Al(x)Ga(1-x))2O3   composition x_Al (x_Al = 0: pure beta-Ga2O3)
 `material` defaults to the simplest NITRIDE class that fits the given
 fractions, so existing AlGaN-only code and saved projects behave exactly as
-before; a zincblende layer always names its class.
+before; a zincblende or oxide layer always names its class.
   x_Al = 0, x_In = 0  ->  GaN;  x_Al = 1 -> AlN;  x_In = 1 -> InN
-A stack is all wurtzite or all zincblende, never both.
+A stack uses one crystal system (wurtzite, zincblende or monoclinic).
 
 Supported grading profiles:
   'abrupt'    - constant composition (same as AbruptLayer)
@@ -97,7 +99,7 @@ class AbruptLayer:
 
     @property
     def crystal(self) -> str:
-        """'wurtzite' | 'zincblende'."""
+        """'wurtzite' | 'zincblende' | 'monoclinic'."""
         return crystal_of(self.material)
 
     @property
@@ -143,7 +145,7 @@ class GradedLayer:
 
     @property
     def crystal(self) -> str:
-        """'wurtzite' | 'zincblende'."""
+        """'wurtzite' | 'zincblende' | 'monoclinic'."""
         return crystal_of(self.material)
 
     @classmethod
